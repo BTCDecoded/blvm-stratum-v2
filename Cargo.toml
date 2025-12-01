@@ -1,0 +1,59 @@
+[package]
+name = "bllvm-stratum-v2"
+version = "0.1.0"
+edition = "2021"
+authors = ["Bitcoin Commons Team"]
+description = "Stratum V2 mining protocol module for bllvm-node"
+license = "MIT"
+repository = "https://github.com/BTCDecoded/bllvm-stratum-v2"
+homepage = "https://btcdecoded.org"
+keywords = ["bitcoin", "mining", "stratum", "module"]
+categories = ["cryptography::cryptocurrencies"]
+
+[[bin]]
+name = "bllvm-stratum-v2"
+path = "src/main.rs"
+
+[lib]
+name = "bllvm_stratum_v2"
+path = "src/lib.rs"
+
+[dependencies]
+# bllvm-node for module system integration
+bllvm-node = { path = "../bllvm-node", package = "bllvm-node" }
+
+# bllvm-consensus for proof of work validation
+bllvm-consensus = { path = "../bllvm-consensus", package = "bllvm-consensus" }
+
+# Async runtime
+tokio = { version = "1.48", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Command-line argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# Futures for async streams
+futures = "0.3"
+
+# Cryptography
+sha2 = "0.10"
+
+# Serialization
+bincode = "1.3"
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+

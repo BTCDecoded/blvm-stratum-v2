@@ -1,0 +1,11 @@
+name = "bllvm-stratum-v2"
+version = "0.1.0"
+description = "Stratum V2 mining protocol module for bllvm-node"
+author = "Bitcoin Commons Team"
+entry_point = "bllvm-stratum-v2"
+
+capabilities = [
+    "read_blockchain",
+    "subscribe_events",
+]
+

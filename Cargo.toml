@@ -20,10 +20,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # bllvm-node for module system integration
-bllvm-node = { path = "../bllvm-node", package = "bllvm-node" }
+bllvm-node = { path = "../blvm-node", package = "bllvm-node" }
 
 # bllvm-consensus for proof of work validation
-bllvm-consensus = { path = "../bllvm-consensus", package = "bllvm-consensus" }
+bllvm-consensus = { path = "../blvm-consensus", package = "bllvm-consensus" }
 
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }

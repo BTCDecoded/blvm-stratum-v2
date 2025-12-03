@@ -9,6 +9,7 @@ This module provides Stratum V2 mining protocol support for bllvm-node, includin
 - Mining pool management
 - Merge mining coordination
 - Mining job distribution
+- Full network integration (messages routed via node network layer)
 
 ## Installation
 

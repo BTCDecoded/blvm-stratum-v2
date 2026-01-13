@@ -1,7 +1,9 @@
 //! bllvm-stratum-v2 - Stratum V2 mining protocol module
 //!
 //! This module provides Stratum V2 mining protocol support for bllvm-node,
-//! including server implementation, mining pool management, and merge mining.
+//! including server implementation and mining pool management.
+//!
+//! Note: Merge mining is now a separate module (blvm-merge-mining) that depends on this module.
 
 use anyhow::Result;
 use bllvm_node::module::ipc::protocol::{EventMessage, EventPayload, EventType, LogLevel, ModuleMessage};
@@ -12,7 +14,6 @@ use tracing::{error, info, warn};
 
 mod server;
 mod pool;
-mod merge_mining;
 mod error;
 mod client;
 mod nodeapi_ipc;
@@ -95,7 +96,7 @@ async fn main() -> Result<()> {
     let ipc_client = client.get_ipc_client();
     let node_api = Arc::new(NodeApiIpc::new(ipc_client));
 
-    // Create server and merge mining coordinator
+    // Create server
     let ctx = bllvm_node::module::traits::ModuleContext {
         module_id: module_id.clone(),
         config: std::collections::HashMap::new(),
@@ -105,8 +106,8 @@ async fn main() -> Result<()> {
 
     let server = server::StratumV2Server::new(&ctx, Arc::clone(&node_api)).await
         .map_err(|e| anyhow::anyhow!("Failed to create server: {}", e))?;
-    let merge_mining = merge_mining::MergeMiningCoordinator::new(&ctx, Arc::clone(&node_api)).await
-        .map_err(|e| anyhow::anyhow!("Failed to create merge mining coordinator: {}", e))?;
+    
+    // Note: Merge mining is now handled by separate blvm-merge-mining module
 
     info!("Stratum V2 module initialized and running");
 

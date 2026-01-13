@@ -16,8 +16,6 @@ pub enum StratumV2Error {
     #[error("Block template generation error: {0}")]
     TemplateError(String),
     
-    #[error("Merge mining error: {0}")]
-    MergeMiningError(String),
     
     #[error("Configuration error: {0}")]
     ConfigError(String),

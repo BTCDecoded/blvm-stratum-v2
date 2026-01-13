@@ -1,10 +1,11 @@
 //! bllvm-stratum-v2 - Stratum V2 mining protocol module
 //!
 //! Library exports for testing and integration
+//!
+//! Note: Merge mining is now a separate module (blvm-merge-mining) that depends on this module
 
 pub mod client;
 pub mod error;
-pub mod merge_mining;
 pub mod messages;
 pub mod nodeapi_ipc;
 pub mod pool;

@@ -9,3 +9,4 @@ capabilities = [
     "subscribe_events",
 ]
 
+# Note: Merge mining is now a separate module (blvm-merge-mining) that depends on this module

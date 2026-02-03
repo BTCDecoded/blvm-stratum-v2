@@ -2,10 +2,11 @@
 //!
 //! Provides NodeAPI trait implementation over IPC for the Stratum V2 module.
 
-use bllvm_node::module::ipc::client::ModuleIpcClient;
-use bllvm_node::module::ipc::protocol::{EventPayload, EventType, RequestMessage, RequestPayload, ResponsePayload};
-use bllvm_node::module::traits::{ModuleError, NodeAPI};
-use bllvm_protocol::{Block, BlockHeader, Hash, OutPoint, Transaction, UTXO};
+use blvm_node::module::ipc::client::ModuleIpcClient;
+use blvm_node::module::ipc::protocol::{EventPayload, EventType, MessageType, RequestMessage, RequestPayload, ResponsePayload};
+use blvm_node::module::inter_module::api::ModuleAPI;
+use blvm_node::module::traits::{ModuleError, NodeAPI};
+use blvm_protocol::{Block, BlockHeader, Hash, OutPoint, Transaction, UTXO};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -30,6 +31,57 @@ impl NodeApiIpc {
         *id += 1;
         *id
     }
+
+    /// Helper method to make IPC requests (no MessageType parameter - inferred from payload)
+    async fn request<T, F>(
+        &self,
+        payload: RequestPayload,
+        mapper: F,
+    ) -> Result<T, ModuleError>
+    where
+        F: FnOnce(ResponsePayload) -> Result<T, ModuleError>,
+    {
+        let correlation_id = self.next_correlation_id().await;
+        
+        // Infer MessageType from payload
+        let request_type = match &payload {
+            RequestPayload::DiscoverModules => MessageType::DiscoverModules,
+            RequestPayload::GetModuleInfo { .. } => MessageType::GetModuleInfo,
+            RequestPayload::IsModuleAvailable { .. } => MessageType::IsModuleAvailable,
+            RequestPayload::PublishEvent { .. } => MessageType::PublishEvent,
+            RequestPayload::SendStratumV2MessageToPeer { .. } => MessageType::SendStratumV2MessageToPeer,
+            RequestPayload::GetAllMetrics => MessageType::GetAllMetrics,
+            RequestPayload::CallModule { .. } => MessageType::CallModule,
+            RequestPayload::RegisterModuleApi { .. } => MessageType::RegisterModuleApi,
+            RequestPayload::UnregisterModuleApi => MessageType::UnregisterModuleApi,
+            RequestPayload::GetModuleHealth { .. } => MessageType::GetModuleHealth,
+            RequestPayload::GetAllModuleHealth => MessageType::GetAllModuleHealth,
+            RequestPayload::ReportModuleHealth { .. } => MessageType::ReportModuleHealth,
+            RequestPayload::SendMeshPacketToPeer { .. } => MessageType::SendMeshPacketToPeer,
+            _ => return Err(ModuleError::OperationError("Unsupported request payload".to_string())),
+        };
+        
+        let request = RequestMessage {
+            correlation_id,
+            request_type,
+            payload,
+        };
+
+        let response = self.ipc_client.lock().await.request(request).await?;
+
+        if !response.success {
+            return Err(ModuleError::OperationError(
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
+            ));
+        }
+
+        match response.payload {
+            Some(payload) => mapper(payload),
+            None => Err(ModuleError::OperationError("Empty response payload".to_string())),
+        }
+    }
 }
 
 #[async_trait]
@@ -38,7 +90,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetBlock,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetBlock,
             payload: RequestPayload::GetBlock { hash: *hash },
         };
 
@@ -53,7 +105,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetBlockHeader,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetBlockHeader,
             payload: RequestPayload::GetBlockHeader { hash: *hash },
         };
 
@@ -68,7 +120,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetTransaction,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetTransaction,
             payload: RequestPayload::GetTransaction { hash: *hash },
         };
 
@@ -83,7 +135,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::HasTransaction,
+            request_type: blvm_node::module::ipc::protocol::MessageType::HasTransaction,
             payload: RequestPayload::HasTransaction { hash: *hash },
         };
 
@@ -98,7 +150,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetChainTip,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetChainTip,
             payload: RequestPayload::GetChainTip,
         };
 
@@ -113,7 +165,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetBlockHeight,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetBlockHeight,
             payload: RequestPayload::GetBlockHeight,
         };
 
@@ -128,7 +180,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetUtxo,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetUtxo,
             payload: RequestPayload::GetUtxo {
                 outpoint: outpoint.clone(),
             },
@@ -143,7 +195,7 @@ impl NodeAPI for NodeApiIpc {
 
     async fn subscribe_events(
         &self,
-        _event_types: Vec<bllvm_node::module::traits::EventType>,
+        _event_types: Vec<blvm_node::module::traits::EventType>,
     ) -> Result<(), ModuleError> {
         // Event subscription is handled by ModuleClient
         Ok(())
@@ -153,7 +205,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetMempoolTransactions,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetMempoolTransactions,
             payload: RequestPayload::GetMempoolTransactions,
         };
 
@@ -168,7 +220,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetMempoolTransaction,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetMempoolTransaction,
             payload: RequestPayload::GetMempoolTransaction { tx_hash: *tx_hash },
         };
 
@@ -179,11 +231,11 @@ impl NodeAPI for NodeApiIpc {
         }
     }
 
-    async fn get_mempool_size(&self) -> Result<bllvm_node::module::traits::MempoolSize, ModuleError> {
+    async fn get_mempool_size(&self) -> Result<blvm_node::module::traits::MempoolSize, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetMempoolSize,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetMempoolSize,
             payload: RequestPayload::GetMempoolSize,
         };
 
@@ -194,11 +246,11 @@ impl NodeAPI for NodeApiIpc {
         }
     }
 
-    async fn get_network_stats(&self) -> Result<bllvm_node::module::traits::NetworkStats, ModuleError> {
+    async fn get_network_stats(&self) -> Result<blvm_node::module::traits::NetworkStats, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetNetworkStats,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetNetworkStats,
             payload: RequestPayload::GetNetworkStats,
         };
 
@@ -209,11 +261,11 @@ impl NodeAPI for NodeApiIpc {
         }
     }
 
-    async fn get_network_peers(&self) -> Result<Vec<bllvm_node::module::traits::PeerInfo>, ModuleError> {
+    async fn get_network_peers(&self) -> Result<Vec<blvm_node::module::traits::PeerInfo>, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetNetworkPeers,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetNetworkPeers,
             payload: RequestPayload::GetNetworkPeers,
         };
 
@@ -224,11 +276,11 @@ impl NodeAPI for NodeApiIpc {
         }
     }
 
-    async fn get_chain_info(&self) -> Result<bllvm_node::module::traits::ChainInfo, ModuleError> {
+    async fn get_chain_info(&self) -> Result<blvm_node::module::traits::ChainInfo, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetChainInfo,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetChainInfo,
             payload: RequestPayload::GetChainInfo,
         };
 
@@ -243,7 +295,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetBlockByHeight,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetBlockByHeight,
             payload: RequestPayload::GetBlockByHeight { height },
         };
 
@@ -258,7 +310,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetLightningNodeUrl,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetLightningNodeUrl,
             payload: RequestPayload::GetLightningNodeUrl,
         };
 
@@ -269,11 +321,11 @@ impl NodeAPI for NodeApiIpc {
         }
     }
 
-    async fn get_lightning_info(&self) -> Result<Option<bllvm_node::module::traits::LightningInfo>, ModuleError> {
+    async fn get_lightning_info(&self) -> Result<Option<blvm_node::module::traits::LightningInfo>, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetLightningInfo,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetLightningInfo,
             payload: RequestPayload::GetLightningInfo,
         };
 
@@ -284,11 +336,11 @@ impl NodeAPI for NodeApiIpc {
         }
     }
 
-    async fn get_payment_state(&self, payment_id: &str) -> Result<Option<bllvm_node::module::traits::PaymentState>, ModuleError> {
+    async fn get_payment_state(&self, payment_id: &str) -> Result<Option<blvm_node::module::traits::PaymentState>, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetPaymentState,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetPaymentState,
             payload: RequestPayload::GetPaymentState {
                 payment_id: payment_id.to_string(),
             },
@@ -305,7 +357,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::CheckTransactionInMempool,
+            request_type: blvm_node::module::ipc::protocol::MessageType::CheckTransactionInMempool,
             payload: RequestPayload::CheckTransactionInMempool { tx_hash: *tx_hash },
         };
 
@@ -320,7 +372,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetFeeEstimate,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetFeeEstimate,
             payload: RequestPayload::GetFeeEstimate { target_blocks },
         };
 
@@ -336,7 +388,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::ReadFile,
+            request_type: blvm_node::module::ipc::protocol::MessageType::ReadFile,
             payload: RequestPayload::ReadFile { path },
         };
 
@@ -351,7 +403,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::WriteFile,
+            request_type: blvm_node::module::ipc::protocol::MessageType::WriteFile,
             payload: RequestPayload::WriteFile { path, data },
         };
 
@@ -369,7 +421,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::DeleteFile,
+            request_type: blvm_node::module::ipc::protocol::MessageType::DeleteFile,
             payload: RequestPayload::DeleteFile { path },
         };
 
@@ -387,7 +439,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::ListDirectory,
+            request_type: blvm_node::module::ipc::protocol::MessageType::ListDirectory,
             payload: RequestPayload::ListDirectory { path },
         };
 
@@ -402,7 +454,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::CreateDirectory,
+            request_type: blvm_node::module::ipc::protocol::MessageType::CreateDirectory,
             payload: RequestPayload::CreateDirectory { path },
         };
 
@@ -419,11 +471,11 @@ impl NodeAPI for NodeApiIpc {
     async fn get_file_metadata(
         &self,
         path: String,
-    ) -> Result<bllvm_node::module::ipc::protocol::FileMetadata, ModuleError> {
+    ) -> Result<blvm_node::module::ipc::protocol::FileMetadata, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetFileMetadata,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetFileMetadata,
             payload: RequestPayload::GetFileMetadata { path },
         };
 
@@ -439,7 +491,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::StorageOpenTree,
+            request_type: blvm_node::module::ipc::protocol::MessageType::StorageOpenTree,
             payload: RequestPayload::StorageOpenTree { name },
         };
 
@@ -454,7 +506,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::StorageInsert,
+            request_type: blvm_node::module::ipc::protocol::MessageType::StorageInsert,
             payload: RequestPayload::StorageInsert {
                 tree_id,
                 key,
@@ -476,7 +528,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::StorageGet,
+            request_type: blvm_node::module::ipc::protocol::MessageType::StorageGet,
             payload: RequestPayload::StorageGet { tree_id, key },
         };
 
@@ -491,7 +543,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::StorageRemove,
+            request_type: blvm_node::module::ipc::protocol::MessageType::StorageRemove,
             payload: RequestPayload::StorageRemove { tree_id, key },
         };
 
@@ -514,7 +566,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::StorageIter,
+            request_type: blvm_node::module::ipc::protocol::MessageType::StorageIter,
             payload: RequestPayload::StorageIter { tree_id },
         };
 
@@ -528,12 +580,12 @@ impl NodeAPI for NodeApiIpc {
     async fn storage_transaction(
         &self,
         tree_id: String,
-        operations: Vec<bllvm_node::module::ipc::protocol::StorageOperation>,
+        operations: Vec<blvm_node::module::ipc::protocol::StorageOperation>,
     ) -> Result<(), ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::StorageTransaction,
+            request_type: blvm_node::module::ipc::protocol::MessageType::StorageTransaction,
             payload: RequestPayload::StorageTransaction { tree_id, operations },
         };
 
@@ -556,7 +608,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::RegisterRpcEndpoint,
+            request_type: blvm_node::module::ipc::protocol::MessageType::RegisterRpcEndpoint,
             payload: RequestPayload::RegisterRpcEndpoint { method, description },
         };
 
@@ -574,7 +626,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::UnregisterRpcEndpoint,
+            request_type: blvm_node::module::ipc::protocol::MessageType::UnregisterRpcEndpoint,
             payload: RequestPayload::UnregisterRpcEndpoint {
                 method: method.to_string(),
             },
@@ -596,8 +648,8 @@ impl NodeAPI for NodeApiIpc {
     async fn register_timer(
         &self,
         _interval_seconds: u64,
-        _callback: Arc<dyn bllvm_node::module::timers::manager::TimerCallback>,
-    ) -> Result<bllvm_node::module::timers::manager::TimerId, ModuleError> {
+        _callback: Arc<dyn blvm_node::module::timers::manager::TimerCallback>,
+    ) -> Result<blvm_node::module::timers::manager::TimerId, ModuleError> {
         Err(ModuleError::OperationError(
             "Timer callbacks cannot be serialized over IPC. Use tokio::time::interval for module-side timers.".to_string(),
         ))
@@ -605,7 +657,7 @@ impl NodeAPI for NodeApiIpc {
 
     async fn cancel_timer(
         &self,
-        _timer_id: bllvm_node::module::timers::manager::TimerId,
+        _timer_id: blvm_node::module::timers::manager::TimerId,
     ) -> Result<(), ModuleError> {
         Err(ModuleError::OperationError(
             "Timer callbacks cannot be serialized over IPC. Manage timers locally in the module.".to_string(),
@@ -615,19 +667,19 @@ impl NodeAPI for NodeApiIpc {
     async fn schedule_task(
         &self,
         _delay_seconds: u64,
-        _callback: Arc<dyn bllvm_node::module::timers::manager::TaskCallback>,
-    ) -> Result<bllvm_node::module::timers::manager::TaskId, ModuleError> {
+        _callback: Arc<dyn blvm_node::module::timers::manager::TaskCallback>,
+    ) -> Result<blvm_node::module::timers::manager::TaskId, ModuleError> {
         Err(ModuleError::OperationError(
             "Task callbacks cannot be serialized over IPC. Use tokio::time::sleep for module-side delayed tasks.".to_string(),
         ))
     }
 
     // Metrics and telemetry
-    async fn report_metric(&self, metric: bllvm_node::module::metrics::manager::Metric) -> Result<(), ModuleError> {
+    async fn report_metric(&self, metric: blvm_node::module::metrics::manager::Metric) -> Result<(), ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::ReportMetric,
+            request_type: blvm_node::module::ipc::protocol::MessageType::ReportMetric,
             payload: RequestPayload::ReportMetric { metric },
         };
 
@@ -644,11 +696,11 @@ impl NodeAPI for NodeApiIpc {
     async fn get_module_metrics(
         &self,
         module_id: &str,
-    ) -> Result<Vec<bllvm_node::module::metrics::manager::Metric>, ModuleError> {
+    ) -> Result<Vec<blvm_node::module::metrics::manager::Metric>, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetModuleMetrics,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetModuleMetrics,
             payload: RequestPayload::GetModuleMetrics {
                 module_id: module_id.to_string(),
             },
@@ -675,7 +727,7 @@ impl NodeAPI for NodeApiIpc {
         Ok(())
     }
     
-    async fn discover_modules(&self) -> Result<Vec<bllvm_node::module::traits::ModuleInfo>, ModuleError> {
+    async fn discover_modules(&self) -> Result<Vec<blvm_node::module::traits::ModuleInfo>, ModuleError> {
         self.request(
             RequestPayload::DiscoverModules,
             |payload| match payload {
@@ -686,7 +738,7 @@ impl NodeAPI for NodeApiIpc {
         .await
     }
     
-    async fn get_module_info(&self, module_id: &str) -> Result<Option<bllvm_node::module::traits::ModuleInfo>, ModuleError> {
+    async fn get_module_info(&self, module_id: &str) -> Result<Option<blvm_node::module::traits::ModuleInfo>, ModuleError> {
         self.request(
             RequestPayload::GetModuleInfo {
                 module_id: module_id.to_string(),
@@ -714,8 +766,8 @@ impl NodeAPI for NodeApiIpc {
     
     async fn publish_event(
         &self,
-        event_type: bllvm_node::module::traits::EventType,
-        payload: bllvm_node::module::ipc::protocol::EventPayload,
+        event_type: blvm_node::module::traits::EventType,
+        payload: blvm_node::module::ipc::protocol::EventPayload,
     ) -> Result<(), ModuleError> {
         self.request(
             RequestPayload::PublishEvent { event_type, payload },
@@ -743,6 +795,149 @@ impl NodeAPI for NodeApiIpc {
                     }
                 }
                 _ => Err(ModuleError::OperationError("Invalid response format".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn get_all_metrics(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, Vec<blvm_node::module::metrics::manager::Metric>>,
+        ModuleError,
+    > {
+        self.request(
+            RequestPayload::GetAllMetrics,
+            |payload| match payload {
+                ResponsePayload::AllMetrics(metrics) => Ok(metrics),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn call_module(
+        &self,
+        target_module_id: Option<&str>,
+        method: &str,
+        params: Vec<u8>,
+    ) -> Result<Vec<u8>, ModuleError> {
+        self.request(
+            RequestPayload::CallModule {
+                target_module_id: target_module_id.map(|s| s.to_string()),
+                method: method.to_string(),
+                params,
+            },
+            |payload| match payload {
+                ResponsePayload::ModuleApiResponse(response) => Ok(response),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn register_module_api(
+        &self,
+        _api: Arc<dyn blvm_node::module::inter_module::api::ModuleAPI>,
+    ) -> Result<(), ModuleError> {
+        // Module API registration cannot be done over IPC as the API implementation
+        // (Arc<dyn ModuleAPI>) cannot be serialized. This must be handled via
+        // module-side registration mechanism, not through the NodeAPI IPC interface.
+        Err(ModuleError::OperationError(
+            "Module API registration must be done via module-side registration, not IPC".to_string(),
+        ))
+    }
+
+    async fn unregister_module_api(&self) -> Result<(), ModuleError> {
+        self.request(
+            RequestPayload::UnregisterModuleApi,
+            |payload| match payload {
+                ResponsePayload::ModuleApiUnregistered => Ok(()),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn send_mesh_packet_to_module(
+        &self,
+        _module_id: &str,
+        _packet_data: Vec<u8>,
+        _peer_addr: String,
+    ) -> Result<(), ModuleError> {
+        // This method is for the node to send packets to modules, not for modules to call over IPC.
+        // Modules should use send_mesh_packet_to_peer() instead.
+        Err(ModuleError::OperationError(
+            "send_mesh_packet_to_module is not available over IPC - use send_mesh_packet_to_peer instead".to_string(),
+        ))
+    }
+
+    async fn send_mesh_packet_to_peer(
+        &self,
+        peer_addr: String,
+        packet_data: Vec<u8>,
+    ) -> Result<(), ModuleError> {
+        self.request(
+            RequestPayload::SendMeshPacketToPeer {
+                peer_addr,
+                packet_data,
+            },
+            |payload| match payload {
+                ResponsePayload::Bool(success) => {
+                    if success {
+                        Ok(())
+                    } else {
+                        Err(ModuleError::OperationError(
+                            "Failed to send mesh packet".to_string(),
+                        ))
+                    }
+                }
+                _ => Err(ModuleError::OperationError(
+                    "Invalid response format".to_string(),
+                )),
+            },
+        )
+        .await
+    }
+
+    async fn get_module_health(
+        &self,
+        module_id: &str,
+    ) -> Result<Option<blvm_node::module::process::monitor::ModuleHealth>, ModuleError> {
+        self.request(
+            RequestPayload::GetModuleHealth {
+                module_id: module_id.to_string(),
+            },
+            |payload| match payload {
+                ResponsePayload::ModuleHealth(health) => Ok(health),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn get_all_module_health(
+        &self,
+    ) -> Result<Vec<(String, blvm_node::module::process::monitor::ModuleHealth)>, ModuleError> {
+        self.request(
+            RequestPayload::GetAllModuleHealth,
+            |payload| match payload {
+                ResponsePayload::AllModuleHealth(health) => Ok(health),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn report_module_health(
+        &self,
+        health: blvm_node::module::process::monitor::ModuleHealth,
+    ) -> Result<(), ModuleError> {
+        self.request(
+            RequestPayload::ReportModuleHealth { health },
+            |payload| match payload {
+                ResponsePayload::HealthReported => Ok(()),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
             },
         )
         .await

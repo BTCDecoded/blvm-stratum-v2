@@ -117,15 +117,43 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!("Server startup failed: {}", e));
     }
 
-    // Event processing loop
+    // Event processing loop with periodic cleanup
     let mut event_receiver = client.event_receiver();
-    while let Some(event) = event_receiver.recv().await {
-        // Handle events
-        if let Err(e) = server.handle_event(&event, node_api.as_ref()).await {
-            warn!("Error handling event: {}", e);
+    let mut last_cleanup = std::time::Instant::now();
+    const CLEANUP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+    
+    loop {
+        tokio::select! {
+            event = event_receiver.recv() => {
+                match event {
+                    Some(event) => {
+                        // Handle events
+                        if let Err(e) = server.handle_event(&event, node_api.as_ref()).await {
+                            warn!("Error handling event: {}", e);
+                        }
+                    }
+                    None => {
+                        warn!("Event receiver closed, module shutting down");
+                        break;
+                    }
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                // Periodic cleanup every minute
+                if last_cleanup.elapsed() >= CLEANUP_INTERVAL {
+                    // Cleanup disconnected miners (5 minute timeout)
+                    let pool = server.get_pool().await;
+                    let mut pool_guard = pool.write().await;
+                    pool_guard.cleanup_disconnected_miners(300); // 5 minutes
+                    pool_guard.cleanup_old_jobs();
+                    drop(pool_guard);
+                    last_cleanup = std::time::Instant::now();
+                    debug!("Performed periodic cleanup");
+                }
+            }
         }
     }
 
-    warn!("Event receiver closed, module shutting down");
+    warn!("Module shutting down");
     Ok(())
 }

@@ -5,7 +5,7 @@
 use blvm_node::module::ipc::client::ModuleIpcClient;
 use blvm_node::module::ipc::protocol::{EventPayload, EventType, MessageType, RequestMessage, RequestPayload, ResponsePayload};
 use blvm_node::module::inter_module::api::ModuleAPI;
-use blvm_node::module::traits::{ModuleError, NodeAPI};
+use blvm_node::module::traits::{ModuleError, NodeAPI, SubmitBlockResult};
 use blvm_protocol::{Block, BlockHeader, Hash, OutPoint, Transaction, UTXO};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -937,6 +937,37 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::ReportModuleHealth { health },
             |payload| match payload {
                 ResponsePayload::HealthReported => Ok(()),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn get_block_template(
+        &self,
+        rules: Vec<String>,
+        coinbase_script: Option<Vec<u8>>,
+        coinbase_address: Option<String>,
+    ) -> Result<blvm_protocol::mining::BlockTemplate, ModuleError> {
+        self.request(
+            RequestPayload::GetBlockTemplate {
+                rules,
+                coinbase_script,
+                coinbase_address,
+            },
+            |payload| match payload {
+                ResponsePayload::BlockTemplate(template) => Ok(template),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn submit_block(&self, block: Block) -> Result<SubmitBlockResult, ModuleError> {
+        self.request(
+            RequestPayload::SubmitBlock { block },
+            |payload| match payload {
+                ResponsePayload::SubmitBlockResult(result) => Ok(result),
                 _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
             },
         )

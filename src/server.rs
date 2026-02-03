@@ -274,90 +274,214 @@ impl StratumV2Server {
             return (Vec::new(), Vec::new(), Vec::new());
         };
         
-        // Serialize coinbase
-        let coinbase_bytes = bincode::serialize(coinbase).unwrap_or_default();
+        // Serialize coinbase transaction properly
+        // For Stratum V2, we split at a specific point to allow miners to modify
+        // the coinbase script while keeping the structure intact
+        let coinbase_bytes = self.serialize_transaction(coinbase);
         
-        // Split coinbase (simplified - in production would split at specific points)
-        // For Stratum V2, typically split after the first few bytes (version, input count, etc.)
-        // For now, use a simple midpoint split
-        let split_point = coinbase_bytes.len() / 2;
+        // Split coinbase for Stratum V2
+        // Split after: version (4) + input count (varint, typically 1 byte) + 
+        // first input (prevout hash 32 + index 4 + script length varint + script + sequence 4)
+        // We'll split after the script length varint, allowing miners to modify the script
+        let mut split_point = 4; // version
+        if coinbase_bytes.len() > split_point {
+            // Skip input count varint (typically 1 byte for count=1)
+            split_point += 1;
+        }
+        if coinbase_bytes.len() > split_point + 36 {
+            // Skip prevout (32 bytes hash + 4 bytes index)
+            split_point += 36;
+        }
+        if coinbase_bytes.len() > split_point {
+            // Read script length varint (1-9 bytes)
+            let (script_len, script_len_bytes) = self.read_varint(&coinbase_bytes[split_point..]);
+            split_point += script_len_bytes;
+        }
+        // Split after script length - miners can modify script
+        // Ensure we have a reasonable split point
+        if split_point >= coinbase_bytes.len() {
+            split_point = coinbase_bytes.len() / 2;
+        }
+        
         let coinbase_prefix = coinbase_bytes[..split_point].to_vec();
         let coinbase_suffix = coinbase_bytes[split_point..].to_vec();
         
         // Calculate merkle path for transactions
-        // Merkle path is the list of hashes needed to compute merkle root
+        // Merkle path is the list of sibling hashes needed to compute merkle root from coinbase
         let mut merkle_path = Vec::new();
         
         if template.transactions.len() > 1 {
-            // Calculate transaction hashes
+            // Calculate transaction hashes (double SHA256)
             let mut tx_hashes = Vec::new();
             for tx in template.transactions.iter() {
-                let tx_bytes = bincode::serialize(tx).unwrap_or_default();
-                let hash = Sha256::digest(&tx_bytes);
-                tx_hashes.push(hash);
+                let tx_bytes = self.serialize_transaction(tx);
+                let hash1 = Sha256::digest(&tx_bytes);
+                let hash2 = Sha256::digest(hash1);
+                let mut tx_hash = [0u8; 32];
+                tx_hash.copy_from_slice(&hash2);
+                tx_hashes.push(tx_hash);
             }
             
             // Build merkle tree and extract path from coinbase (index 0) to root
-            // For Stratum V2, we need the merkle path: list of sibling hashes from coinbase to root
-            // The path allows miners to compute the merkle root without all transactions
-            
-            // Coinbase is at index 0, so we need siblings at each level
-            let mut level = tx_hashes.clone();
-            let mut coinbase_index = 0; // Track coinbase position through tree levels
+            // Track coinbase position through tree levels
+            let mut level = tx_hashes;
+            let mut coinbase_pos = 0; // Coinbase is always at index 0 in first level
             
             while level.len() > 1 {
                 let mut next_level = Vec::new();
-                let mut current_path_hashes = Vec::new();
+                let mut sibling_hash: Option<Hash> = None;
                 
-                // Build next level and track coinbase's sibling
+                // Process pairs
                 for i in (0..level.len()).step_by(2) {
                     if i + 1 < level.len() {
-                        // Pair of hashes
+                        // Pair of hashes - combine and hash
                         let mut combined = level[i].to_vec();
                         combined.extend_from_slice(&level[i + 1]);
-                        let hash = Sha256::digest(&combined);
-                        next_level.push(hash);
+                        let hash1 = Sha256::digest(&combined);
+                        let hash2 = Sha256::digest(hash1);
+                        let mut parent_hash = [0u8; 32];
+                        parent_hash.copy_from_slice(&hash2);
+                        next_level.push(parent_hash);
                         
-                        // If coinbase is in this pair, store its sibling
-                        if coinbase_index == i {
-                            // Coinbase is first, sibling is second
-                            let mut sibling_hash = [0u8; 32];
-                            sibling_hash.copy_from_slice(&level[i + 1]);
-                            current_path_hashes.push(sibling_hash);
-                            coinbase_index = next_level.len() - 1; // Update coinbase position
-                        } else if coinbase_index == i + 1 {
-                            // Coinbase is second, sibling is first
-                            let mut sibling_hash = [0u8; 32];
-                            sibling_hash.copy_from_slice(&level[i]);
-                            current_path_hashes.push(sibling_hash);
-                            coinbase_index = next_level.len() - 1; // Update coinbase position
+                        // Track coinbase's sibling
+                        let pair_index = i / 2;
+                        if coinbase_pos == i {
+                            // Coinbase is first in pair, sibling is second
+                            sibling_hash = Some(level[i + 1]);
+                            coinbase_pos = pair_index;
+                        } else if coinbase_pos == i + 1 {
+                            // Coinbase is second in pair, sibling is first
+                            sibling_hash = Some(level[i]);
+                            coinbase_pos = pair_index;
+                        } else if coinbase_pos == pair_index {
+                            // Coinbase is in this pair's parent, no sibling at this level
                         }
                     } else {
-                        // Odd one out, duplicate it
+                        // Odd one out - duplicate and hash
                         let mut combined = level[i].to_vec();
                         combined.extend_from_slice(&level[i]);
-                        let hash = Sha256::digest(&combined);
-                        next_level.push(hash);
+                        let hash1 = Sha256::digest(&combined);
+                        let hash2 = Sha256::digest(hash1);
+                        let mut parent_hash = [0u8; 32];
+                        parent_hash.copy_from_slice(&hash2);
+                        next_level.push(parent_hash);
                         
-                        // If coinbase is the odd one, no sibling (duplicated)
-                        if coinbase_index == i {
-                            // No sibling, coinbase is duplicated
-                            coinbase_index = next_level.len() - 1;
+                        // If coinbase is the odd one, no sibling
+                        let pair_index = i / 2;
+                        if coinbase_pos == i {
+                            coinbase_pos = pair_index;
+                            // No sibling when duplicated
                         }
                     }
                 }
                 
-                // Add path hashes from this level (in reverse order for Stratum V2)
-                merkle_path.extend(current_path_hashes);
+                // Add sibling to path if found
+                if let Some(sibling) = sibling_hash {
+                    merkle_path.push(sibling);
+                }
                 
                 level = next_level;
             }
-            
-            // Reverse merkle path (Stratum V2 expects path from coinbase to root, bottom-up)
-            merkle_path.reverse();
         }
         
         (coinbase_prefix, coinbase_suffix, merkle_path)
+    }
+    
+    /// Serialize transaction for hashing (matches consensus layer format)
+    pub fn serialize_transaction(&self, tx: &bllvm_protocol::Transaction) -> Vec<u8> {
+        let mut data = Vec::new();
+        
+        // Version (4 bytes, little-endian)
+        data.extend_from_slice(&(tx.version as u32).to_le_bytes());
+        
+        // Input count (varint)
+        data.extend_from_slice(&self.encode_varint(tx.inputs.len() as u64));
+        
+        // Inputs
+        for input in &tx.inputs {
+            // Previous output hash (32 bytes)
+            data.extend_from_slice(&input.prevout.hash);
+            // Previous output index (4 bytes, little-endian)
+            data.extend_from_slice(&(input.prevout.index as u32).to_le_bytes());
+            // Script length (varint)
+            data.extend_from_slice(&self.encode_varint(input.script_sig.len() as u64));
+            // Script
+            data.extend_from_slice(&input.script_sig);
+            // Sequence (4 bytes, little-endian)
+            data.extend_from_slice(&(input.sequence as u32).to_le_bytes());
+        }
+        
+        // Output count (varint)
+        data.extend_from_slice(&self.encode_varint(tx.outputs.len() as u64));
+        
+        // Outputs
+        for output in &tx.outputs {
+            // Value (8 bytes, little-endian)
+            data.extend_from_slice(&output.value.to_le_bytes());
+            // Script length (varint)
+            data.extend_from_slice(&self.encode_varint(output.script_pubkey.len() as u64));
+            // Script
+            data.extend_from_slice(&output.script_pubkey);
+        }
+        
+        // Lock time (4 bytes, little-endian)
+        data.extend_from_slice(&(tx.lock_time as u32).to_le_bytes());
+        
+        data
+    }
+    
+    /// Encode varint (variable-length integer)
+    pub fn encode_varint(&self, value: u64) -> Vec<u8> {
+        let mut result = Vec::new();
+        if value < 0xfd {
+            result.push(value as u8);
+        } else if value <= 0xffff {
+            result.push(0xfd);
+            result.extend_from_slice(&(value as u16).to_le_bytes());
+        } else if value <= 0xffffffff {
+            result.push(0xfe);
+            result.extend_from_slice(&(value as u32).to_le_bytes());
+        } else {
+            result.push(0xff);
+            result.extend_from_slice(&value.to_le_bytes());
+        }
+        result
+    }
+    
+    /// Read varint from bytes
+    pub fn read_varint(&self, data: &[u8]) -> (u64, usize) {
+        if data.is_empty() {
+            return (0, 0);
+        }
+        match data[0] {
+            n if n < 0xfd => (n as u64, 1),
+            0xfd => {
+                if data.len() < 3 {
+                    return (0, 0);
+                }
+                let value = u16::from_le_bytes([data[1], data[2]]);
+                (value as u64, 3)
+            }
+            0xfe => {
+                if data.len() < 5 {
+                    return (0, 0);
+                }
+                let mut bytes = [0u8; 4];
+                bytes.copy_from_slice(&data[1..5]);
+                let value = u32::from_le_bytes(bytes);
+                (value as u64, 5)
+            }
+            0xff => {
+                if data.len() < 9 {
+                    return (0, 0);
+                }
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&data[1..9]);
+                let value = u64::from_le_bytes(bytes);
+                (value, 9)
+            }
+            _ => (0, 0),
+        }
     }
     
     /// Handle incoming Stratum V2 message
@@ -376,24 +500,67 @@ impl StratumV2Server {
         let response_bytes = match tag {
             message_types::SETUP_CONNECTION => {
                 let msg: SetupConnectionMessage = SetupConnectionMessage::from_bytes(&payload)?;
-                let response = self.handle_setup_connection(msg, &endpoint).await?;
-                let response_payload = response.to_bytes()?;
-                let mut encoder = crate::protocol::TlvEncoder::new();
-                encoder.encode(response.message_type(), &response_payload)?
+                match self.handle_setup_connection(msg, &endpoint).await {
+                    Ok(response) => {
+                        let response_payload = response.to_bytes()?;
+                        let mut encoder = crate::protocol::TlvEncoder::new();
+                        encoder.encode(response.message_type(), &response_payload)?
+                    }
+                    Err(e) => {
+                        // Return error response
+                        let error_msg = crate::messages::SetupConnectionErrorMessage {
+                            error_code: 1, // Setup failed
+                            error_message: format!("Setup connection failed: {}", e),
+                        };
+                        let response_payload = error_msg.to_bytes()?;
+                        let mut encoder = crate::protocol::TlvEncoder::new();
+                        encoder.encode(error_msg.message_type(), &response_payload)?
+                    }
+                }
             }
             message_types::OPEN_MINING_CHANNEL => {
                 let msg: OpenMiningChannelMessage = OpenMiningChannelMessage::from_bytes(&payload)?;
-                let response = self.handle_open_channel(&endpoint, msg).await?;
-                let response_payload = response.to_bytes()?;
-                let mut encoder = crate::protocol::TlvEncoder::new();
-                encoder.encode(response.message_type(), &response_payload)?
+                match self.handle_open_channel(&endpoint, msg.clone()).await {
+                    Ok(response) => {
+                        let response_payload = response.to_bytes()?;
+                        let mut encoder = crate::protocol::TlvEncoder::new();
+                        encoder.encode(response.message_type(), &response_payload)?
+                    }
+                    Err(e) => {
+                        // Return error response
+                        let error_msg = crate::messages::OpenMiningChannelErrorMessage {
+                            channel_id: msg.channel_id,
+                            request_id: msg.request_id,
+                            error_code: 2, // Channel open failed
+                            error_message: format!("Failed to open channel: {}", e),
+                        };
+                        let response_payload = error_msg.to_bytes()?;
+                        let mut encoder = crate::protocol::TlvEncoder::new();
+                        encoder.encode(error_msg.message_type(), &response_payload)?
+                    }
+                }
             }
             message_types::SUBMIT_SHARES => {
                 let msg: SubmitSharesMessage = SubmitSharesMessage::from_bytes(&payload)?;
-                let response = self.handle_submit_shares(&endpoint, msg).await?;
-                let response_payload = response.to_bytes()?;
-                let mut encoder = crate::protocol::TlvEncoder::new();
-                encoder.encode(response.message_type(), &response_payload)?
+                match self.handle_submit_shares(&endpoint, msg.clone()).await {
+                    Ok(response) => {
+                        let response_payload = response.to_bytes()?;
+                        let mut encoder = crate::protocol::TlvEncoder::new();
+                        encoder.encode(response.message_type(), &response_payload)?
+                    }
+                    Err(e) => {
+                        // Return error response
+                        let error_msg = crate::messages::SubmitSharesErrorMessage {
+                            channel_id: msg.channel_id,
+                            job_id: msg.shares.first().map(|s| s.job_id).unwrap_or(0),
+                            error_code: 3, // Share submission failed
+                            error_message: format!("Failed to process shares: {}", e),
+                        };
+                        let response_payload = error_msg.to_bytes()?;
+                        let mut encoder = crate::protocol::TlvEncoder::new();
+                        encoder.encode(error_msg.message_type(), &response_payload)?
+                    }
+                }
             }
             _ => {
                 return Err(StratumV2Error::ProtocolError(format!("Unknown message type: {}", tag)));
@@ -409,6 +576,14 @@ impl StratumV2Server {
         msg: crate::messages::SetupConnectionMessage,
         endpoint: &str,
     ) -> Result<crate::messages::SetupConnectionSuccessMessage, StratumV2Error> {
+        // Validate protocol version
+        if msg.protocol_version != 2 {
+            return Err(StratumV2Error::ProtocolError(format!(
+                "Unsupported protocol version: {}. Only version 2 is supported.",
+                msg.protocol_version
+            )));
+        }
+        
         let mut pool = self.pool.write().await;
         pool.register_miner(endpoint.to_string());
         
@@ -447,6 +622,8 @@ impl StratumV2Server {
         
         // Process each share
         let mut last_job_id = 0;
+        let mut has_valid_block = false;
+        
         for share in msg.shares {
             let share_data = ShareData {
                 channel_id: share.channel_id,
@@ -456,14 +633,73 @@ impl StratumV2Server {
                 merkle_root: share.merkle_root,
             };
             
-            let _is_valid = pool.handle_share(endpoint, share_data)?;
+            let (is_valid_share, is_valid_block) = pool.handle_share(endpoint, share_data)?;
+            
+            if is_valid_block {
+                has_valid_block = true;
+                // Submit block to node
+                if let Some(template) = &pool.current_template {
+                    // Reconstruct block from share and template
+                    if let Err(e) = self.submit_block_from_share(template, &share_data).await {
+                        warn!("Failed to submit block: {}", e);
+                    }
+                }
+            }
+            
             last_job_id = share.job_id;
         }
+        
+        // Cleanup old jobs periodically
+        pool.cleanup_old_jobs();
         
         Ok(crate::messages::SubmitSharesSuccessMessage {
             channel_id: msg.channel_id,
             last_job_id,
         })
+    }
+    
+    /// Submit a valid block to the node
+    async fn submit_block_from_share(
+        &self,
+        template: &bllvm_protocol::Block,
+        share: &crate::pool::ShareData,
+    ) -> Result<(), StratumV2Error> {
+        use bllvm_protocol::{Block, BlockHeader};
+        
+        // Reconstruct block header with share data
+        let mut header = template.header.clone();
+        header.version = share.version as i32;
+        header.merkle_root = share.merkle_root;
+        header.nonce = share.nonce as u64;
+        // Timestamp can be adjusted by miner, but we'll use template timestamp for now
+        // In production, miners would provide timestamp in share
+        
+        // Reconstruct full block
+        let block = Block {
+            header,
+            transactions: template.transactions.clone(),
+        };
+        
+        // Submit to node
+        match self.node_api.submit_block(block).await {
+            Ok(result) => {
+                match result {
+                    bllvm_node::module::traits::SubmitBlockResult::Accepted => {
+                        info!("Block submitted and accepted by node");
+                    }
+                    bllvm_node::module::traits::SubmitBlockResult::Rejected(reason) => {
+                        warn!("Block submitted but rejected: {}", reason);
+                    }
+                    bllvm_node::module::traits::SubmitBlockResult::Duplicate => {
+                        debug!("Block already known to node");
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => {
+                Err(StratumV2Error::ServerError(format!("Failed to submit block: {}", e)))
+            }
+        }
     }
     
     /// Get mining pool statistics
@@ -481,6 +717,11 @@ impl StratumV2Server {
                 .map(|m| m.stats.rejected_shares)
                 .sum(),
         }
+    }
+    
+    /// Get pool reference for cleanup operations
+    pub fn get_pool(&self) -> Arc<RwLock<StratumV2Pool>> {
+        Arc::clone(&self.pool)
     }
 }
 

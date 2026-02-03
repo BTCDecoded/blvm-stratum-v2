@@ -181,12 +181,17 @@ impl StratumV2Pool {
         &mut self,
         endpoint: &str,
         share: ShareData,
-    ) -> Result<bool, StratumV2Error> {
+    ) -> Result<(bool, bool), StratumV2Error> {
+        // Returns (is_valid_share, is_valid_block)
         let miner = self.miners.get_mut(endpoint)
             .ok_or_else(|| StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint)))?;
 
         // Update statistics
         miner.stats.total_shares += 1;
+        miner.stats.last_share_time = Some(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs());
 
         // Get channel
         let channel = miner.channels.get(&share.channel_id)
@@ -196,31 +201,38 @@ impl StratumV2Pool {
         let job_info = channel.jobs.get(&share.job_id)
             .ok_or_else(|| StratumV2Error::ProtocolError(format!("Job not found: {}", share.job_id)))?;
 
-        // Validate share (simplified - full validation would check PoW)
-        let is_valid = self.validate_share(&share, job_info, &channel.target);
+        // Validate share
+        let is_valid_share = self.validate_share(&share, job_info, &channel.target);
+        
+        // Check if this is a valid block (meets network difficulty)
+        let is_valid_block = if is_valid_share {
+            // Check if it also meets network difficulty
+            self.validate_block(&share, job_info)
+        } else {
+            false
+        };
 
-        if is_valid {
+        if is_valid_share {
             miner.stats.accepted_shares += 1;
-            info!("Accepted share from {}: channel={}, job={}", endpoint, share.channel_id, share.job_id);
+            if is_valid_block {
+                info!("Valid block found from {}: channel={}, job={}", endpoint, share.channel_id, share.job_id);
+            } else {
+                debug!("Accepted share from {}: channel={}, job={}", endpoint, share.channel_id, share.job_id);
+            }
         } else {
             miner.stats.rejected_shares += 1;
             warn!("Rejected share from {}: channel={}, job={}", endpoint, share.channel_id, share.job_id);
         }
 
-        Ok(is_valid)
+        Ok((is_valid_share, is_valid_block))
     }
-
-    /// Validate a share using consensus-proof functions
-    fn validate_share(&self, share: &ShareData, job_info: &JobInfo, target: &Hash) -> bool {
+    
+    /// Validate if share meets network difficulty (is a valid block)
+    fn validate_block(&self, share: &ShareData, job_info: &JobInfo) -> bool {
         use bllvm_consensus::ConsensusProof;
         use bllvm_protocol::BlockHeader;
 
-        // 1. Basic validation
-        if share.job_id != job_info.job_id {
-            return false;
-        }
-
-        // 2. Construct block header from share data and job info
+        // Construct block header
         let header = BlockHeader {
             version: share.version,
             prev_block_hash: job_info.prev_hash,
@@ -230,7 +242,98 @@ impl StratumV2Pool {
             nonce: share.nonce as u64,
         };
 
-        // 3. Verify proof of work using consensus-proof
+        // Verify proof of work using consensus (validates against network target)
+        let consensus = ConsensusProof::new();
+        match consensus.check_proof_of_work(&header) {
+            Ok(pow_valid) => pow_valid,
+            Err(_) => false,
+        }
+    }
+    
+    /// Clean up old jobs from channels
+    /// Removes jobs older than max_jobs per channel
+    pub fn cleanup_old_jobs(&mut self) {
+        for (_endpoint, miner) in &mut self.miners {
+            for (_channel_id, channel) in &mut miner.channels {
+                // Keep only the most recent max_jobs
+                if channel.jobs.len() > channel.max_jobs as usize {
+                    // Sort jobs by ID (higher ID = newer)
+                    let mut job_ids: Vec<u32> = channel.jobs.keys().cloned().collect();
+                    job_ids.sort();
+                    job_ids.reverse(); // Newest first
+                    
+                    // Remove oldest jobs
+                    let to_remove = job_ids.split_off(channel.max_jobs as usize);
+                    for job_id in to_remove {
+                        channel.jobs.remove(&job_id);
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Remove disconnected miners (those with no recent shares)
+    pub fn cleanup_disconnected_miners(&mut self, timeout_seconds: u64) {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let mut to_remove = Vec::new();
+        for (endpoint, miner) in &self.miners {
+            if let Some(last_share) = miner.stats.last_share_time {
+                if current_time.saturating_sub(last_share) > timeout_seconds {
+                    to_remove.push(endpoint.clone());
+                }
+            } else {
+                // No shares ever submitted, remove if channels are empty
+                if miner.channels.is_empty() {
+                    to_remove.push(endpoint.clone());
+                }
+            }
+        }
+        
+        for endpoint in to_remove {
+            self.miners.remove(&endpoint);
+            info!("Removed disconnected miner: {}", endpoint);
+        }
+    }
+
+    /// Validate a share using consensus-proof functions
+    pub fn validate_share(&self, share: &ShareData, job_info: &JobInfo, target: &Hash) -> bool {
+        use bllvm_consensus::ConsensusProof;
+        use bllvm_protocol::BlockHeader;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // 1. Basic validation - check job exists
+        if share.job_id != job_info.job_id {
+            return false;
+        }
+
+        // 2. Timestamp validation - check it's within reasonable bounds
+        // Allow timestamp to be within 2 hours of current time (for network time drift)
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let timestamp = job_info.timestamp as i64;
+        let time_diff = (timestamp - current_time).abs();
+        if time_diff > 7200 {
+            // More than 2 hours difference
+            return false;
+        }
+
+        // 3. Construct block header from share data and job info
+        let header = BlockHeader {
+            version: share.version,
+            prev_block_hash: job_info.prev_hash,
+            merkle_root: share.merkle_root,
+            timestamp: job_info.timestamp as i64,
+            bits: job_info.bits as u32,
+            nonce: share.nonce as u64,
+        };
+
+        // 4. Verify proof of work using consensus-proof (validates against network target)
         let consensus = ConsensusProof::new();
         match consensus.check_proof_of_work(&header) {
             Ok(pow_valid) => {
@@ -243,18 +346,25 @@ impl StratumV2Pool {
             }
         }
 
-        // 4. Check if hash meets channel target (for share validation)
+        // 5. Check if hash meets channel target (for share validation)
         // Channel targets are typically easier than network targets
+        // We need to check if the block hash is <= channel target
         let block_hash = self.calculate_block_hash(&header);
-        block_hash <= *target
+        
+        // Compare hashes as big-endian integers (lower hash = higher difficulty)
+        // For share validation, we want hash <= target (easier than network difficulty)
+        self.hash_less_than_or_equal(&block_hash, target)
     }
 
     /// Calculate block hash (double SHA256 of header)
-    fn calculate_block_hash(&self, header: &bllvm_protocol::BlockHeader) -> Hash {
+    /// Uses the same serialization as consensus layer for consistency
+    pub fn calculate_block_hash(&self, header: &bllvm_protocol::BlockHeader) -> Hash {
         use sha2::{Digest, Sha256};
 
-        // Serialize header
-        let mut data = Vec::new();
+        // Serialize header exactly as consensus layer does (80 bytes)
+        // Format: version (4 bytes LE), prev_hash (32 bytes), merkle_root (32 bytes),
+        //         timestamp (4 bytes LE), bits (4 bytes LE), nonce (4 bytes LE)
+        let mut data = Vec::with_capacity(80);
         data.extend_from_slice(&(header.version as u32).to_le_bytes());
         data.extend_from_slice(&header.prev_block_hash);
         data.extend_from_slice(&header.merkle_root);
@@ -271,8 +381,23 @@ impl StratumV2Pool {
         result
     }
 
+    /// Compare two hashes as big-endian integers
+    /// Returns true if hash1 <= hash2 (hash1 is easier/higher value)
+    pub fn hash_less_than_or_equal(&self, hash1: &Hash, hash2: &Hash) -> bool {
+        // Compare byte by byte (big-endian)
+        for i in 0..32 {
+            if hash1[i] < hash2[i] {
+                return true;
+            } else if hash1[i] > hash2[i] {
+                return false;
+            }
+        }
+        // Equal
+        true
+    }
+
     /// Calculate channel target from difficulty
-    fn calculate_channel_target(&self, min_difficulty: u32) -> Result<Hash, StratumV2Error> {
+    pub fn calculate_channel_target(&self, min_difficulty: u32) -> Result<Hash, StratumV2Error> {
         // Use proper consensus functions for target calculation
         // For channel targets, we adjust the difficulty to be easier than network difficulty
         // Channel targets are typically 10-100x easier for share validation

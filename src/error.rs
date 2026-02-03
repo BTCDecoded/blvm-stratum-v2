@@ -19,5 +19,11 @@ pub enum StratumV2Error {
     
     #[error("Configuration error: {0}")]
     ConfigError(String),
+    
+    #[error("Mining pool error: {0}")]
+    PoolError(String),
+    
+    #[error("Server error: {0}")]
+    ServerError(String),
 }
 

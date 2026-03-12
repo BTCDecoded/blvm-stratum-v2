@@ -1,8 +1,8 @@
-name = "bllvm-stratum-v2"
+name = "blvm-stratum-v2"
 version = "0.1.0"
-description = "Stratum V2 mining protocol module for bllvm-node"
+description = "Stratum V2 mining protocol module for blvm-node"
 author = "Bitcoin Commons Team"
-entry_point = "bllvm-stratum-v2"
+entry_point = "blvm-stratum-v2"
 
 capabilities = [
     "read_blockchain",

@@ -1,7 +1,7 @@
 //! Unit tests for share validation and PoW checking
 
-use bllvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
-use bllvm_protocol::{Block, BlockHeader, Hash};
+use blvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
+use blvm_protocol::{Block, BlockHeader, Hash};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn create_test_block() -> Block {

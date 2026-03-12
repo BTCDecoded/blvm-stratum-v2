@@ -1,7 +1,7 @@
 //! Unit tests for Stratum V2 mining and share validation
 
-use bllvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
-use bllvm_protocol::{Block, BlockHeader};
+use blvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
+use blvm_protocol::{Block, BlockHeader};
 
 fn create_test_block() -> Block {
     Block {

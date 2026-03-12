@@ -1,7 +1,7 @@
 //! Mining pool management for Stratum V2
 
 use crate::error::StratumV2Error;
-use bllvm_protocol::{Block, Hash};
+use blvm_protocol::{Block, Hash};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -229,8 +229,8 @@ impl StratumV2Pool {
     
     /// Validate if share meets network difficulty (is a valid block)
     fn validate_block(&self, share: &ShareData, job_info: &JobInfo) -> bool {
-        use bllvm_consensus::ConsensusProof;
-        use bllvm_protocol::BlockHeader;
+        use blvm_consensus::ConsensusProof;
+        use blvm_protocol::BlockHeader;
 
         // Construct block header
         let header = BlockHeader {
@@ -299,10 +299,10 @@ impl StratumV2Pool {
         }
     }
 
-    /// Validate a share using consensus-proof functions
+    /// Validate a share using blvm-consensus functions
     pub fn validate_share(&self, share: &ShareData, job_info: &JobInfo, target: &Hash) -> bool {
-        use bllvm_consensus::ConsensusProof;
-        use bllvm_protocol::BlockHeader;
+        use blvm_consensus::ConsensusProof;
+        use blvm_protocol::BlockHeader;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         // 1. Basic validation - check job exists
@@ -333,7 +333,7 @@ impl StratumV2Pool {
             nonce: share.nonce as u64,
         };
 
-        // 4. Verify proof of work using consensus-proof (validates against network target)
+        // 4. Verify proof of work using blvm-consensus (validates against network target)
         let consensus = ConsensusProof::new();
         match consensus.check_proof_of_work(&header) {
             Ok(pow_valid) => {
@@ -358,7 +358,7 @@ impl StratumV2Pool {
 
     /// Calculate block hash (double SHA256 of header)
     /// Uses the same serialization as consensus layer for consistency
-    pub fn calculate_block_hash(&self, header: &bllvm_protocol::BlockHeader) -> Hash {
+    pub fn calculate_block_hash(&self, header: &blvm_protocol::BlockHeader) -> Hash {
         use sha2::{Digest, Sha256};
 
         // Serialize header exactly as consensus layer does (80 bytes)
@@ -420,7 +420,7 @@ impl StratumV2Pool {
             (min_difficulty as u64 * 100).min(10000)
         };
         
-        // Expand base target from compact format using bllvm-consensus logic
+        // Expand base target from compact format using blvm-consensus logic
         let exponent = (base_bits >> 24) as u8;
         let mantissa = base_bits & 0x00ffffff;
         

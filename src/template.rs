@@ -1,8 +1,8 @@
 //! Block template generation for Stratum V2
 
 use crate::error::StratumV2Error;
-use bllvm_node::module::traits::NodeAPI;
-use bllvm_protocol::{Block, BlockHeader, Hash, Transaction};
+use blvm_node::module::traits::NodeAPI;
+use blvm_protocol::{Block, BlockHeader, Hash, Transaction};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 

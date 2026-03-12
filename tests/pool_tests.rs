@@ -1,10 +1,10 @@
 //! Tests for Stratum V2 Pool
 
-use bllvm_stratum_v2::messages::{
+use blvm_stratum_v2::messages::{
     OpenMiningChannelMessage, SetupConnectionMessage,
 };
-use bllvm_stratum_v2::pool::{MinerStats, StratumV2Pool};
-use bllvm_protocol::{Block, BlockHeader};
+use blvm_stratum_v2::pool::{MinerStats, StratumV2Pool};
+use blvm_protocol::{Block, BlockHeader};
 
 fn create_test_block() -> Block {
     Block {

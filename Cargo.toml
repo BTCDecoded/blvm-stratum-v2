@@ -1,29 +1,29 @@
 [package]
-name = "bllvm-stratum-v2"
+name = "blvm-stratum-v2"
 version = "0.1.0"
 edition = "2021"
 authors = ["Bitcoin Commons Team"]
-description = "Stratum V2 mining protocol module for bllvm-node"
+description = "Stratum V2 mining protocol module for blvm-node"
 license = "MIT"
-repository = "https://github.com/BTCDecoded/bllvm-stratum-v2"
+repository = "https://github.com/BTCDecoded/blvm-stratum-v2"
 homepage = "https://btcdecoded.org"
 keywords = ["bitcoin", "mining", "stratum", "module"]
 categories = ["cryptography::cryptocurrencies"]
 
 [[bin]]
-name = "bllvm-stratum-v2"
+name = "blvm-stratum-v2"
 path = "src/main.rs"
 
 [lib]
-name = "bllvm_stratum_v2"
+name = "blvm_stratum_v2"
 path = "src/lib.rs"
 
 [dependencies]
-# bllvm-node for module system integration
-bllvm-node = { path = "../blvm-node", package = "bllvm-node" }
+# blvm-node for module system integration
+blvm-node = { path = "../blvm-node", package = "blvm-node" }
 
-# bllvm-consensus for proof of work validation
-bllvm-consensus = { path = "../blvm-consensus", package = "bllvm-consensus" }
+# blvm-consensus for proof of work validation
+blvm-consensus = { path = "../blvm-consensus", package = "blvm-consensus" }
 
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }

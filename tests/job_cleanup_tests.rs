@@ -1,7 +1,7 @@
 //! Unit tests for job cleanup and connection management
 
-use bllvm_stratum_v2::pool::StratumV2Pool;
-use bllvm_protocol::{Block, BlockHeader};
+use blvm_stratum_v2::pool::StratumV2Pool;
+use blvm_protocol::{Block, BlockHeader};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn create_test_block() -> Block {

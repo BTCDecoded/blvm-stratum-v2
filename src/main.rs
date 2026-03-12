@@ -1,12 +1,12 @@
-//! bllvm-stratum-v2 - Stratum V2 mining protocol module
+//! blvm-stratum-v2 - Stratum V2 mining protocol module
 //!
-//! This module provides Stratum V2 mining protocol support for bllvm-node,
+//! This module provides Stratum V2 mining protocol support for blvm-node,
 //! including server implementation and mining pool management.
 //!
 //! Note: Merge mining is now a separate module (blvm-merge-mining) that depends on this module.
 
 use anyhow::Result;
-use bllvm_node::module::ipc::protocol::{EventMessage, EventPayload, EventType, LogLevel, ModuleMessage};
+use blvm_node::module::ipc::protocol::{EventMessage, EventPayload, EventType, LogLevel, ModuleMessage};
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     // Get module ID (from args or environment)
     let module_id = args.module_id
         .or_else(|| std::env::var("MODULE_NAME").ok())
-        .unwrap_or_else(|| "bllvm-stratum-v2".to_string());
+        .unwrap_or_else(|| "blvm-stratum-v2".to_string());
 
     // Get socket path (from args, env, or default)
     let socket_path = args.socket_path
@@ -62,13 +62,13 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("MODULE_SOCKET_DIR").ok().map(|d| PathBuf::from(d).join("modules.sock")))
         .unwrap_or_else(|| PathBuf::from("data/modules/modules.sock"));
 
-    info!("bllvm-stratum-v2 module starting... (module_id: {}, socket: {:?})", module_id, socket_path);
+    info!("blvm-stratum-v2 module starting... (module_id: {}, socket: {:?})", module_id, socket_path);
 
     // Connect to node
     let mut client = match ModuleClient::connect(
         socket_path,
         module_id.clone(),
-        "bllvm-stratum-v2".to_string(),
+        "blvm-stratum-v2".to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
     ).await {
         Ok(client) => client,
@@ -97,10 +97,10 @@ async fn main() -> Result<()> {
     let node_api = Arc::new(NodeApiIpc::new(ipc_client));
 
     // Create server
-    let ctx = bllvm_node::module::traits::ModuleContext {
+    let ctx = blvm_node::module::traits::ModuleContext {
         module_id: module_id.clone(),
         config: std::collections::HashMap::new(),
-        data_dir: args.data_dir.unwrap_or_else(|| PathBuf::from("data/modules/bllvm-stratum-v2")),
+        data_dir: args.data_dir.unwrap_or_else(|| PathBuf::from("data/modules/blvm-stratum-v2")),
         socket_path: socket_path.to_string_lossy().to_string(),
     };
 

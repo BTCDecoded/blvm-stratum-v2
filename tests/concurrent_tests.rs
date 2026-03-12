@@ -1,7 +1,7 @@
 //! Tests for concurrent operations and thread safety
 
-use bllvm_stratum_v2::pool::{ShareData, StratumV2Pool};
-use bllvm_protocol::{Block, BlockHeader};
+use blvm_stratum_v2::pool::{ShareData, StratumV2Pool};
+use blvm_protocol::{Block, BlockHeader};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};

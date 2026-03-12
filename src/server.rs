@@ -3,9 +3,9 @@
 use crate::error::StratumV2Error;
 use crate::pool::StratumV2Pool;
 use crate::template::BlockTemplateGenerator;
-use bllvm_node::module::ipc::protocol::ModuleMessage;
-use bllvm_node::module::traits::{EventPayload, EventType, NodeAPI};
-use bllvm_protocol::{Block, Hash};
+use blvm_node::module::ipc::protocol::ModuleMessage;
+use blvm_node::module::traits::{EventPayload, EventType, NodeAPI};
+use blvm_protocol::{Block, Hash};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -27,7 +27,7 @@ pub struct StratumV2Server {
 impl StratumV2Server {
     /// Create a new Stratum V2 server
     pub async fn new(
-        ctx: &bllvm_node::module::traits::ModuleContext,
+        ctx: &blvm_node::module::traits::ModuleContext,
         node_api: Arc<dyn NodeAPI>,
     ) -> Result<Self, StratumV2Error> {
         let listen_addr = ctx.get_config_or("stratum_v2.listen_addr", "0.0.0.0:3333");
@@ -388,7 +388,7 @@ impl StratumV2Server {
     }
     
     /// Serialize transaction for hashing (matches consensus layer format)
-    pub fn serialize_transaction(&self, tx: &bllvm_protocol::Transaction) -> Vec<u8> {
+    pub fn serialize_transaction(&self, tx: &blvm_protocol::Transaction) -> Vec<u8> {
         let mut data = Vec::new();
         
         // Version (4 bytes, little-endian)
@@ -661,10 +661,10 @@ impl StratumV2Server {
     /// Submit a valid block to the node
     async fn submit_block_from_share(
         &self,
-        template: &bllvm_protocol::Block,
+        template: &blvm_protocol::Block,
         share: &crate::pool::ShareData,
     ) -> Result<(), StratumV2Error> {
-        use bllvm_protocol::{Block, BlockHeader};
+        use blvm_protocol::{Block, BlockHeader};
         
         // Reconstruct block header with share data
         let mut header = template.header.clone();
@@ -684,13 +684,13 @@ impl StratumV2Server {
         match self.node_api.submit_block(block).await {
             Ok(result) => {
                 match result {
-                    bllvm_node::module::traits::SubmitBlockResult::Accepted => {
+                    blvm_node::module::traits::SubmitBlockResult::Accepted => {
                         info!("Block submitted and accepted by node");
                     }
-                    bllvm_node::module::traits::SubmitBlockResult::Rejected(reason) => {
+                    blvm_node::module::traits::SubmitBlockResult::Rejected(reason) => {
                         warn!("Block submitted but rejected: {}", reason);
                     }
-                    bllvm_node::module::traits::SubmitBlockResult::Duplicate => {
+                    blvm_node::module::traits::SubmitBlockResult::Duplicate => {
                         debug!("Block already known to node");
                     }
                 }

@@ -1,4 +1,4 @@
-//! bllvm-stratum-v2 - Stratum V2 mining protocol module
+//! blvm-stratum-v2 - Stratum V2 mining protocol module
 //!
 //! Library exports for testing and integration
 //!

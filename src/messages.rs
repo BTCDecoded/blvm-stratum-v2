@@ -4,7 +4,7 @@
 //! https://stratumprotocol.org/
 
 use crate::error::StratumV2Error;
-use bllvm_protocol::Hash;
+use blvm_protocol::Hash;
 use serde::{Deserialize, Serialize};
 
 /// Stratum V2 message type tags

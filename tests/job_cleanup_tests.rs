@@ -13,7 +13,7 @@ fn create_test_block() -> Block {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as i64,
+                .as_secs(),
             bits: 0x1d00ffff,
             nonce: 0,
         },

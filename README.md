@@ -39,6 +39,7 @@ The module integrates with blvm-node through the NodeAPI interface:
 
 ### Protocol Implementation
 
+- **Message Format**: Binary encoding (bincode) with TLV framing (tag + length + payload)
 - **Setup Connection**: Protocol version negotiation and capability exchange
 - **Mining Channels**: Multiple channels per miner with configurable difficulty
 - **Job Distribution**: Automatic job distribution to all active channels

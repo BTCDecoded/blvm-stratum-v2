@@ -20,7 +20,14 @@ path = "src/lib.rs"
 
 [dependencies]
 # blvm-node for module system integration
-blvm-node = { path = "../blvm-node", package = "blvm-node" }
+blvm-node = { path = "../blvm-node" }
+# blvm-sdk for ModuleBootstrap (env-based bootstrap)
+blvm-sdk = { path = "../blvm-sdk", default-features = false, features = ["node"] }
+# blvm-sdk-macros for #[config]
+blvm-sdk-macros = { path = "../blvm-sdk/crates/blvm-sdk-macros" }
+
+# blvm-protocol for Block, BlockHeader, Transaction, Hash, etc.
+blvm-protocol = { path = "../blvm-protocol" }
 
 # blvm-consensus for proof of work validation
 blvm-consensus = { path = "../blvm-consensus", package = "blvm-consensus" }
@@ -31,6 +38,7 @@ tokio = { version = "1.48", features = ["full"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"
 
 # Error handling
 anyhow = "1.0"
@@ -41,14 +49,12 @@ async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Command-line argument parsing
-clap = { version = "4.0", features = ["derive"] }
-
 # Futures for async streams
 futures = "0.3"
 
 # Cryptography
 sha2 = "0.10"
+hex = "0.4"
 
 # Serialization
 bincode = "1.3"

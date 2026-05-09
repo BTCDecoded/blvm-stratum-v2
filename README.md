@@ -86,7 +86,7 @@ The module manifest (`module.toml`) defines:
 
 ```toml
 name = "blvm-stratum-v2"
-version = "0.1.0"
+version = "0.1"
 description = "Stratum V2 mining protocol module"
 entry_point = "blvm-stratum-v2"
 

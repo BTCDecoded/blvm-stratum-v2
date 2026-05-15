@@ -57,4 +57,3 @@ fn test_tlv_decode_raw_insufficient_data() {
     let result = TlvDecoder::decode_raw(&insufficient_data);
     assert!(result.is_err());
 }
-

@@ -1,7 +1,7 @@
 //! Unit tests for Stratum V2 mining and share validation
 
-use blvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
 use blvm_protocol::{Block, BlockHeader};
+use blvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
 
 fn create_test_block() -> Block {
     Block {
@@ -27,10 +27,10 @@ async fn test_stratum_v2_pool_new() {
 #[tokio::test]
 async fn test_set_template() {
     let mut pool = StratumV2Pool::new();
-    
+
     let block = create_test_block();
     let (job_id, _) = pool.set_template(block);
-    
+
     // Template should be set, job_id should be > 0
     assert!(job_id > 0);
 }
@@ -38,7 +38,7 @@ async fn test_set_template() {
 #[tokio::test]
 async fn test_handle_share_no_miner() {
     let mut pool = StratumV2Pool::new();
-    
+
     let share = ShareData {
         channel_id: 1,
         job_id: 1,
@@ -46,7 +46,7 @@ async fn test_handle_share_no_miner() {
         version: 1,
         merkle_root: [0u8; 32],
     };
-    
+
     // Should fail if miner not registered
     let result = pool.handle_share("unknown-miner", share);
     assert!(result.is_err());
@@ -55,10 +55,10 @@ async fn test_handle_share_no_miner() {
 #[tokio::test]
 async fn test_handle_share_no_channel() {
     let mut pool = StratumV2Pool::new();
-    
+
     // Register miner
     pool.register_miner("test-miner".to_string());
-    
+
     let share = ShareData {
         channel_id: 999, // Non-existent channel
         job_id: 1,
@@ -66,7 +66,7 @@ async fn test_handle_share_no_channel() {
         version: 1,
         merkle_root: [0u8; 32],
     };
-    
+
     // Should fail if channel not found
     let result = pool.handle_share("test-miner", share);
     assert!(result.is_err());
@@ -75,11 +75,11 @@ async fn test_handle_share_no_channel() {
 #[tokio::test]
 async fn test_handle_share_no_job() {
     let mut pool = StratumV2Pool::new();
-    
+
     // Register miner and open channel
     pool.register_miner("test-miner".to_string());
     pool.open_channel("test-miner", 1, 1).unwrap();
-    
+
     let share = ShareData {
         channel_id: 1,
         job_id: 999, // Non-existent job
@@ -87,9 +87,8 @@ async fn test_handle_share_no_job() {
         version: 1,
         merkle_root: [0u8; 32],
     };
-    
+
     // Should fail if job not found
     let result = pool.handle_share("test-miner", share);
     assert!(result.is_err());
 }
-

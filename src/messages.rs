@@ -256,4 +256,3 @@ impl StratumV2Message for SubmitSharesErrorMessage {
         message_types::SUBMIT_SHARES_ERROR
     }
 }
-

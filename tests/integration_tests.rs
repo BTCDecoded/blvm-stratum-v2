@@ -2,13 +2,15 @@
 
 mod common;
 
+use blvm_protocol::{
+    Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput,
+};
 use blvm_stratum_v2::{
     messages::{self, *},
     pool::StratumV2Pool,
     protocol::{TlvDecoder, TlvEncoder},
     server::StratumV2Server,
 };
-use blvm_protocol::{Block, BlockHeader, Transaction, OutPoint, TransactionInput, TransactionOutput};
 use common::SubmittingMockNodeAPI;
 use std::sync::Arc;
 
@@ -34,7 +36,8 @@ fn create_test_block() -> Block {
                 },
                 script_sig: vec![blvm_consensus::opcodes::PUSH_1_BYTE, 0x00],
                 sequence: 0xFFFFFFFF,
-            }].into(),
+            }]
+            .into(),
             outputs: vec![TransactionOutput {
                 value: 5000000000,
                 script_pubkey: vec![
@@ -42,9 +45,11 @@ fn create_test_block() -> Block {
                     blvm_consensus::opcodes::OP_HASH160,
                     blvm_consensus::opcodes::PUSH_20_BYTES,
                 ],
-            }].into(),
+            }]
+            .into(),
             lock_time: 0,
-        }].into_boxed_slice(),
+        }]
+        .into_boxed_slice(),
     }
 }
 
@@ -56,20 +61,22 @@ async fn test_setup_connection_flow() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(SubmittingMockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Create Setup Connection message
     let setup_msg = SetupConnectionMessage {
         protocol_version: 2,
         endpoint: "test-miner".to_string(),
         capabilities: vec!["mining".to_string()],
     };
-    
+
     // Handle message
-    let response = server.handle_setup_connection(setup_msg, "test-miner").await;
-    
+    let response = server
+        .handle_setup_connection(setup_msg, "test-miner")
+        .await;
+
     assert!(response.is_ok());
     let success = response.unwrap();
     assert_eq!(success.supported_versions, vec![2]);
@@ -84,19 +91,21 @@ async fn test_setup_connection_invalid_version() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(SubmittingMockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Create Setup Connection message with invalid version
     let setup_msg = SetupConnectionMessage {
         protocol_version: 1, // Invalid version
         endpoint: "test-miner".to_string(),
         capabilities: vec!["mining".to_string()],
     };
-    
+
     // Handle message - should fail
-    let response = server.handle_setup_connection(setup_msg, "test-miner").await;
+    let response = server
+        .handle_setup_connection(setup_msg, "test-miner")
+        .await;
     assert!(response.is_err());
 }
 
@@ -108,25 +117,28 @@ async fn test_open_channel_flow() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(SubmittingMockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // First setup connection
     let setup_msg = SetupConnectionMessage {
         protocol_version: 2,
         endpoint: "test-miner".to_string(),
         capabilities: vec!["mining".to_string()],
     };
-    server.handle_setup_connection(setup_msg, "test-miner").await.unwrap();
-    
+    server
+        .handle_setup_connection(setup_msg, "test-miner")
+        .await
+        .unwrap();
+
     // Then open channel
     let open_msg = OpenMiningChannelMessage {
         channel_id: 1,
         request_id: 1,
         min_difficulty: 1,
     };
-    
+
     let response = server.handle_open_channel("test-miner", open_msg).await;
     assert!(response.is_ok());
     let success = response.unwrap();
@@ -143,17 +155,17 @@ async fn test_open_channel_without_setup() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(SubmittingMockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Try to open channel without setup
     let open_msg = OpenMiningChannelMessage {
         channel_id: 1,
         request_id: 1,
         min_difficulty: 1,
     };
-    
+
     let response = server.handle_open_channel("unknown-miner", open_msg).await;
     assert!(response.is_err());
 }
@@ -166,31 +178,37 @@ async fn test_submit_shares_flow() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(SubmittingMockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Setup connection
     let setup_msg = SetupConnectionMessage {
         protocol_version: 2,
         endpoint: "test-miner".to_string(),
         capabilities: vec!["mining".to_string()],
     };
-    server.handle_setup_connection(setup_msg, "test-miner").await.unwrap();
-    
+    server
+        .handle_setup_connection(setup_msg, "test-miner")
+        .await
+        .unwrap();
+
     // Open channel
     let open_msg = OpenMiningChannelMessage {
         channel_id: 1,
         request_id: 1,
         min_difficulty: 1,
     };
-    server.handle_open_channel("test-miner", open_msg).await.unwrap();
-    
+    server
+        .handle_open_channel("test-miner", open_msg)
+        .await
+        .unwrap();
+
     // Set template to create a job
     let block = create_test_block();
     let pool = server.get_pool();
     pool.write().await.set_template(block);
-    
+
     // Submit shares
     let submit_msg = SubmitSharesMessage {
         channel_id: 1,
@@ -202,7 +220,7 @@ async fn test_submit_shares_flow() {
             merkle_root: [0u8; 32],
         }],
     };
-    
+
     let response = server.handle_submit_shares("test-miner", submit_msg).await;
     assert!(response.is_ok());
     let success = response.unwrap();
@@ -233,16 +251,16 @@ async fn test_message_encoding_decoding() {
         endpoint: "test-miner".to_string(),
         capabilities: vec!["mining".to_string()],
     };
-    
+
     // Encode message
     let payload = setup_msg.to_bytes().unwrap();
     let mut encoder = TlvEncoder::new();
     let encoded = encoder.encode(setup_msg.message_type(), &payload).unwrap();
-    
+
     // Decode message
     let (tag, decoded_payload) = TlvDecoder::decode_raw(&encoded[4..]).unwrap(); // Skip length prefix
     assert_eq!(tag, message_types::SETUP_CONNECTION);
-    
+
     let decoded_msg = SetupConnectionMessage::from_bytes(&decoded_payload).unwrap();
     assert_eq!(decoded_msg.protocol_version, 2);
     assert_eq!(decoded_msg.endpoint, "test-miner");
@@ -256,30 +274,31 @@ async fn test_error_responses() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(SubmittingMockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Test invalid protocol version
     let setup_msg = SetupConnectionMessage {
         protocol_version: 1, // Invalid
         endpoint: "test-miner".to_string(),
         capabilities: vec!["mining".to_string()],
     };
-    
+
     let data = setup_msg.to_bytes().unwrap();
     let mut encoder = TlvEncoder::new();
     let encoded = encoder.encode(setup_msg.message_type(), &data).unwrap();
-    
+
     // Handle message - should return error response
-    let response = server.handle_message(encoded[4..].to_vec(), "test-miner".to_string()).await;
+    let response = server
+        .handle_message(encoded[4..].to_vec(), "test-miner".to_string())
+        .await;
     assert!(response.is_ok());
-    
+
     // Decode response
     let (tag, payload) = TlvDecoder::decode_raw(&response.unwrap()[4..]).unwrap();
     assert_eq!(tag, message_types::SETUP_CONNECTION_ERROR);
-    
+
     let error_msg = SetupConnectionErrorMessage::from_bytes(&payload).unwrap();
     assert_eq!(error_msg.error_code, 1);
 }
-

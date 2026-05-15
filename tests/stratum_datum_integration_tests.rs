@@ -4,6 +4,10 @@
 //! - BlockTemplateGenerator queries DATUM get_coinbase_payout and passes to get_block_template
 //! - handle_submit_shares calls DATUM submit_pow when a valid block is found
 
+use blvm_node::module::traits::NodeAPI;
+use blvm_protocol::{
+    Block, BlockHeader, Hash, OutPoint, Transaction, TransactionInput, TransactionOutput,
+};
 use blvm_stratum_v2::{
     messages::{self, *},
     pool::StratumV2Pool,
@@ -11,8 +15,6 @@ use blvm_stratum_v2::{
     server::StratumV2Server,
     template::BlockTemplateGenerator,
 };
-use blvm_node::module::traits::NodeAPI;
-use blvm_protocol::{Block, BlockHeader, Hash, OutPoint, Transaction, TransactionInput, TransactionOutput};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -63,11 +65,13 @@ fn create_test_block_template() -> blvm_protocol::mining::BlockTemplate {
             },
             script_sig: vec![0x51, 0x00],
             sequence: 0xFFFFFFFF,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 5000000000,
             script_pubkey: vec![0x51, 0x00],
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
     blvm_protocol::mining::BlockTemplate {
@@ -89,16 +93,28 @@ fn create_test_block_template() -> blvm_protocol::mining::BlockTemplate {
 
 #[async_trait::async_trait]
 impl NodeAPI for MockDatumNodeAPI {
-    async fn get_block(&self, _: &Hash) -> Result<Option<Block>, blvm_node::module::traits::ModuleError> {
+    async fn get_block(
+        &self,
+        _: &Hash,
+    ) -> Result<Option<Block>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
-    async fn get_block_header(&self, _: &Hash) -> Result<Option<BlockHeader>, blvm_node::module::traits::ModuleError> {
+    async fn get_block_header(
+        &self,
+        _: &Hash,
+    ) -> Result<Option<BlockHeader>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
-    async fn get_transaction(&self, _: &Hash) -> Result<Option<Transaction>, blvm_node::module::traits::ModuleError> {
+    async fn get_transaction(
+        &self,
+        _: &Hash,
+    ) -> Result<Option<Transaction>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
-    async fn has_transaction(&self, _: &Hash) -> Result<bool, blvm_node::module::traits::ModuleError> {
+    async fn has_transaction(
+        &self,
+        _: &Hash,
+    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
         Ok(false)
     }
     async fn get_chain_tip(&self) -> Result<Hash, blvm_node::module::traits::ModuleError> {
@@ -107,7 +123,10 @@ impl NodeAPI for MockDatumNodeAPI {
     async fn get_block_height(&self) -> Result<u64, blvm_node::module::traits::ModuleError> {
         Ok(100)
     }
-    async fn get_utxo(&self, _: &OutPoint) -> Result<Option<blvm_protocol::UTXO>, blvm_node::module::traits::ModuleError> {
+    async fn get_utxo(
+        &self,
+        _: &OutPoint,
+    ) -> Result<Option<blvm_protocol::UTXO>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
     async fn subscribe_events(
@@ -120,20 +139,31 @@ impl NodeAPI for MockDatumNodeAPI {
         let (_tx, rx) = tokio::sync::mpsc::channel(100);
         Ok(rx)
     }
-    async fn get_mempool_transactions(&self) -> Result<Vec<Hash>, blvm_node::module::traits::ModuleError> {
+    async fn get_mempool_transactions(
+        &self,
+    ) -> Result<Vec<Hash>, blvm_node::module::traits::ModuleError> {
         Ok(Vec::new())
     }
-    async fn get_mempool_transaction(&self, _: &Hash) -> Result<Option<Transaction>, blvm_node::module::traits::ModuleError> {
+    async fn get_mempool_transaction(
+        &self,
+        _: &Hash,
+    ) -> Result<Option<Transaction>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
-    async fn get_mempool_size(&self) -> Result<blvm_node::module::traits::MempoolSize, blvm_node::module::traits::ModuleError> {
+    async fn get_mempool_size(
+        &self,
+    ) -> Result<blvm_node::module::traits::MempoolSize, blvm_node::module::traits::ModuleError>
+    {
         Ok(blvm_node::module::traits::MempoolSize {
             transaction_count: 0,
             size_bytes: 0,
             total_fee_sats: 0,
         })
     }
-    async fn get_network_stats(&self) -> Result<blvm_node::module::traits::NetworkStats, blvm_node::module::traits::ModuleError> {
+    async fn get_network_stats(
+        &self,
+    ) -> Result<blvm_node::module::traits::NetworkStats, blvm_node::module::traits::ModuleError>
+    {
         Ok(blvm_node::module::traits::NetworkStats {
             peer_count: 0,
             hash_rate: 0.0,
@@ -141,10 +171,15 @@ impl NodeAPI for MockDatumNodeAPI {
             bytes_received: 0,
         })
     }
-    async fn get_network_peers(&self) -> Result<Vec<blvm_node::module::traits::PeerInfo>, blvm_node::module::traits::ModuleError> {
+    async fn get_network_peers(
+        &self,
+    ) -> Result<Vec<blvm_node::module::traits::PeerInfo>, blvm_node::module::traits::ModuleError>
+    {
         Ok(Vec::new())
     }
-    async fn get_chain_info(&self) -> Result<blvm_node::module::traits::ChainInfo, blvm_node::module::traits::ModuleError> {
+    async fn get_chain_info(
+        &self,
+    ) -> Result<blvm_node::module::traits::ChainInfo, blvm_node::module::traits::ModuleError> {
         Ok(blvm_node::module::traits::ChainInfo {
             tip_hash: [0u8; 32],
             height: 100,
@@ -153,40 +188,81 @@ impl NodeAPI for MockDatumNodeAPI {
             is_synced: true,
         })
     }
-    async fn get_block_by_height(&self, _: u64) -> Result<Option<Block>, blvm_node::module::traits::ModuleError> {
+    async fn get_block_by_height(
+        &self,
+        _: u64,
+    ) -> Result<Option<Block>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
-    async fn get_lightning_node_url(&self) -> Result<Option<String>, blvm_node::module::traits::ModuleError> {
+    async fn get_lightning_node_url(
+        &self,
+    ) -> Result<Option<String>, blvm_node::module::traits::ModuleError> {
         Ok(None)
     }
-    async fn get_lightning_info(&self) -> Result<Option<blvm_node::module::traits::LightningInfo>, blvm_node::module::traits::ModuleError> {
+    async fn get_lightning_info(
+        &self,
+    ) -> Result<
+        Option<blvm_node::module::traits::LightningInfo>,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(None)
     }
-    async fn get_payment_state(&self, _: &str) -> Result<Option<blvm_node::module::traits::PaymentState>, blvm_node::module::traits::ModuleError> {
+    async fn get_payment_state(
+        &self,
+        _: &str,
+    ) -> Result<
+        Option<blvm_node::module::traits::PaymentState>,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(None)
     }
-    async fn check_transaction_in_mempool(&self, _: &Hash) -> Result<bool, blvm_node::module::traits::ModuleError> {
+    async fn check_transaction_in_mempool(
+        &self,
+        _: &Hash,
+    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
         Ok(false)
     }
-    async fn get_fee_estimate(&self, _: u32) -> Result<u64, blvm_node::module::traits::ModuleError> {
+    async fn get_fee_estimate(
+        &self,
+        _: u32,
+    ) -> Result<u64, blvm_node::module::traits::ModuleError> {
         Ok(1)
     }
-    async fn read_file(&self, _: String) -> Result<Vec<u8>, blvm_node::module::traits::ModuleError> {
+    async fn read_file(
+        &self,
+        _: String,
+    ) -> Result<Vec<u8>, blvm_node::module::traits::ModuleError> {
         Ok(Vec::new())
     }
-    async fn write_file(&self, _: String, _: Vec<u8>) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn write_file(
+        &self,
+        _: String,
+        _: Vec<u8>,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
     async fn delete_file(&self, _: String) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn list_directory(&self, _: String) -> Result<Vec<String>, blvm_node::module::traits::ModuleError> {
+    async fn list_directory(
+        &self,
+        _: String,
+    ) -> Result<Vec<String>, blvm_node::module::traits::ModuleError> {
         Ok(Vec::new())
     }
-    async fn create_directory(&self, _: String) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn create_directory(
+        &self,
+        _: String,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn get_file_metadata(&self, _: String) -> Result<blvm_node::module::ipc::protocol::FileMetadata, blvm_node::module::traits::ModuleError> {
+    async fn get_file_metadata(
+        &self,
+        _: String,
+    ) -> Result<
+        blvm_node::module::ipc::protocol::FileMetadata,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(blvm_node::module::ipc::protocol::FileMetadata {
             path: String::new(),
             size: 0,
@@ -196,47 +272,108 @@ impl NodeAPI for MockDatumNodeAPI {
             created: None,
         })
     }
-    async fn get_all_metrics(&self) -> Result<std::collections::HashMap<String, Vec<blvm_node::module::metrics::manager::Metric>>, blvm_node::module::traits::ModuleError> {
+    async fn get_all_metrics(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, Vec<blvm_node::module::metrics::manager::Metric>>,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(std::collections::HashMap::new())
     }
-    async fn register_rpc_endpoint(&self, _: String, _: String) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn register_rpc_endpoint(
+        &self,
+        _: String,
+        _: String,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn unregister_rpc_endpoint(&self, _: &str) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn unregister_rpc_endpoint(
+        &self,
+        _: &str,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn register_timer(&self, _: u64, _: Arc<dyn blvm_node::module::timers::manager::TimerCallback>) -> Result<blvm_node::module::timers::manager::TimerId, blvm_node::module::traits::ModuleError> {
+    async fn register_timer(
+        &self,
+        _: u64,
+        _: Arc<dyn blvm_node::module::timers::manager::TimerCallback>,
+    ) -> Result<blvm_node::module::timers::manager::TimerId, blvm_node::module::traits::ModuleError>
+    {
         Ok(0)
     }
-    async fn cancel_timer(&self, _: blvm_node::module::timers::manager::TimerId) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn cancel_timer(
+        &self,
+        _: blvm_node::module::timers::manager::TimerId,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn schedule_task(&self, _: u64, _: Arc<dyn blvm_node::module::timers::manager::TaskCallback>) -> Result<blvm_node::module::timers::manager::TaskId, blvm_node::module::traits::ModuleError> {
+    async fn schedule_task(
+        &self,
+        _: u64,
+        _: Arc<dyn blvm_node::module::timers::manager::TaskCallback>,
+    ) -> Result<blvm_node::module::timers::manager::TaskId, blvm_node::module::traits::ModuleError>
+    {
         Ok(0)
     }
-    async fn report_metric(&self, _: blvm_node::module::metrics::manager::Metric) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn report_metric(
+        &self,
+        _: blvm_node::module::metrics::manager::Metric,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn get_module_metrics(&self, _: &str) -> Result<Vec<blvm_node::module::metrics::manager::Metric>, blvm_node::module::traits::ModuleError> {
+    async fn get_module_metrics(
+        &self,
+        _: &str,
+    ) -> Result<
+        Vec<blvm_node::module::metrics::manager::Metric>,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(Vec::new())
     }
-    async fn initialize_module(&self, _: String, _: std::path::PathBuf, _: std::path::PathBuf) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn initialize_module(
+        &self,
+        _: String,
+        _: std::path::PathBuf,
+        _: std::path::PathBuf,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn discover_modules(&self) -> Result<Vec<blvm_node::module::traits::ModuleInfo>, blvm_node::module::traits::ModuleError> {
+    async fn discover_modules(
+        &self,
+    ) -> Result<Vec<blvm_node::module::traits::ModuleInfo>, blvm_node::module::traits::ModuleError>
+    {
         Ok(Vec::new())
     }
-    async fn get_module_info(&self, _: &str) -> Result<Option<blvm_node::module::traits::ModuleInfo>, blvm_node::module::traits::ModuleError> {
+    async fn get_module_info(
+        &self,
+        _: &str,
+    ) -> Result<Option<blvm_node::module::traits::ModuleInfo>, blvm_node::module::traits::ModuleError>
+    {
         Ok(None)
     }
-    async fn is_module_available(&self, id: &str) -> Result<bool, blvm_node::module::traits::ModuleError> {
+    async fn is_module_available(
+        &self,
+        id: &str,
+    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
         Ok(id == "datum" && self.datum_payout_response.is_some())
     }
-    async fn publish_event(&self, _: blvm_node::module::traits::EventType, _: blvm_node::module::ipc::protocol::EventPayload) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn publish_event(
+        &self,
+        _: blvm_node::module::traits::EventType,
+        _: blvm_node::module::ipc::protocol::EventPayload,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn call_module(&self, _: Option<&str>, method: &str, params: Vec<u8>) -> Result<Vec<u8>, blvm_node::module::traits::ModuleError> {
-        self.call_module_invocations.write().await.push((method.to_string(), params.len()));
+    async fn call_module(
+        &self,
+        _: Option<&str>,
+        method: &str,
+        params: Vec<u8>,
+    ) -> Result<Vec<u8>, blvm_node::module::traits::ModuleError> {
+        self.call_module_invocations
+            .write()
+            .await
+            .push((method.to_string(), params.len()));
         if method == "get_coinbase_payout" {
             if let Some(ref resp) = self.datum_payout_response {
                 return Ok(resp.clone());
@@ -247,34 +384,73 @@ impl NodeAPI for MockDatumNodeAPI {
         }
         Ok(Vec::new())
     }
-    async fn register_module_api(&self, _: Arc<dyn blvm_node::module::inter_module::api::ModuleAPI>) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn register_module_api(
+        &self,
+        _: Arc<dyn blvm_node::module::inter_module::api::ModuleAPI>,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
     async fn unregister_module_api(&self) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn get_module_health(&self, _: &str) -> Result<Option<blvm_node::module::process::monitor::ModuleHealth>, blvm_node::module::traits::ModuleError> {
+    async fn get_module_health(
+        &self,
+        _: &str,
+    ) -> Result<
+        Option<blvm_node::module::process::monitor::ModuleHealth>,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(None)
     }
-    async fn get_all_module_health(&self) -> Result<Vec<(String, blvm_node::module::process::monitor::ModuleHealth)>, blvm_node::module::traits::ModuleError> {
+    async fn get_all_module_health(
+        &self,
+    ) -> Result<
+        Vec<(String, blvm_node::module::process::monitor::ModuleHealth)>,
+        blvm_node::module::traits::ModuleError,
+    > {
         Ok(Vec::new())
     }
-    async fn report_module_health(&self, _: blvm_node::module::process::monitor::ModuleHealth) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn report_module_health(
+        &self,
+        _: blvm_node::module::process::monitor::ModuleHealth,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn send_mesh_packet_to_module(&self, _: &str, _: Vec<u8>, _: String) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn send_mesh_packet_to_module(
+        &self,
+        _: &str,
+        _: Vec<u8>,
+        _: String,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn send_mesh_packet_to_peer(&self, _: String, _: Vec<u8>) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn send_mesh_packet_to_peer(
+        &self,
+        _: String,
+        _: Vec<u8>,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn send_stratum_v2_message_to_peer(&self, _: String, _: Vec<u8>) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn send_stratum_v2_message_to_peer(
+        &self,
+        _: String,
+        _: Vec<u8>,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn get_block_template(&self, _: Vec<String>, _: Option<Vec<u8>>, _: Option<String>) -> Result<blvm_protocol::mining::BlockTemplate, blvm_node::module::traits::ModuleError> {
+    async fn get_block_template(
+        &self,
+        _: Vec<String>,
+        _: Option<Vec<u8>>,
+        _: Option<String>,
+    ) -> Result<blvm_protocol::mining::BlockTemplate, blvm_node::module::traits::ModuleError> {
         Ok(self.block_template.clone())
     }
-    async fn submit_block(&self, _: Block) -> Result<blvm_node::module::traits::SubmitBlockResult, blvm_node::module::traits::ModuleError> {
+    async fn submit_block(
+        &self,
+        _: Block,
+    ) -> Result<blvm_node::module::traits::SubmitBlockResult, blvm_node::module::traits::ModuleError>
+    {
         Ok(blvm_node::module::traits::SubmitBlockResult::Accepted)
     }
     async fn register_core_rpc_override(
@@ -337,9 +513,7 @@ impl NodeAPI for MockDatumNodeAPI {
             hashes: vec![],
         })
     }
-    async fn clear_tx_serve_denylist(
-        &self,
-    ) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn clear_tx_serve_denylist(&self) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
     async fn replace_tx_serve_denylist(
@@ -428,7 +602,10 @@ async fn test_pool_accepts_mined_block_share() {
     };
     let (is_valid_share, is_valid_block) = pool.handle_share("miner-1", share_data).unwrap();
     assert!(is_valid_share, "Share should be valid (channel target)");
-    assert!(is_valid_block, "Share should be valid block (network target)");
+    assert!(
+        is_valid_block,
+        "Share should be valid block (network target)"
+    );
 }
 
 #[tokio::test]
@@ -471,11 +648,20 @@ async fn test_submit_shares_calls_datum_submit_pow_on_valid_block() {
     let msg_bytes = msg.to_bytes().unwrap();
     let mut encoder = TlvEncoder::new();
     let encoded = encoder.encode(msg.message_type(), &msg_bytes).unwrap();
-    let msg_result = server.handle_message(encoded[4..].to_vec(), "miner-1".to_string()).await;
-    assert!(msg_result.is_ok(), "handle_message failed: {:?}", msg_result.err());
+    let msg_result = server
+        .handle_message(encoded[4..].to_vec(), "miner-1".to_string())
+        .await;
+    assert!(
+        msg_result.is_ok(),
+        "handle_message failed: {:?}",
+        msg_result.err()
+    );
 
     let invocations = node_api.get_call_invocations().await;
-    let submit_pow_calls: Vec<_> = invocations.iter().filter(|(m, _)| m == "submit_pow").collect();
+    let submit_pow_calls: Vec<_> = invocations
+        .iter()
+        .filter(|(m, _)| m == "submit_pow")
+        .collect();
     assert!(
         !submit_pow_calls.is_empty(),
         "Expected submit_pow to be called on valid block: {:?}",
@@ -502,11 +688,13 @@ fn create_test_block() -> Block {
                 },
                 script_sig: vec![0x51, 0x00],
                 sequence: 0xFFFFFFFF,
-            }].into(),
+            }]
+            .into(),
             outputs: vec![TransactionOutput {
                 value: 5000000000,
                 script_pubkey: vec![0x51, 0x00],
-            }].into(),
+            }]
+            .into(),
             lock_time: 0,
         }]
         .into_boxed_slice(),

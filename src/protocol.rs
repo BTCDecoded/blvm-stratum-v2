@@ -44,14 +44,14 @@ impl TlvEncoder {
 
         // Write payload length (4 bytes, little-endian)
         let payload_len = payload.len() as u32;
-        result
-            .write_all(&payload_len.to_le_bytes())
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write payload length: {}", e)))?;
+        result.write_all(&payload_len.to_le_bytes()).map_err(|e| {
+            StratumV2Error::ProtocolError(format!("Failed to write payload length: {}", e))
+        })?;
 
         // Write payload
-        result
-            .write_all(payload)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write payload: {}", e)))?;
+        result.write_all(payload).map_err(|e| {
+            StratumV2Error::ProtocolError(format!("Failed to write payload: {}", e))
+        })?;
 
         Ok(result)
     }
@@ -88,9 +88,9 @@ impl TlvDecoder {
     pub fn decode(&mut self) -> ProtocolResult<(u16, Vec<u8>)> {
         // Read 4-byte length prefix
         let mut length_bytes = [0u8; 4];
-        self.cursor
-            .read_exact(&mut length_bytes)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read length prefix: {}", e)))?;
+        self.cursor.read_exact(&mut length_bytes).map_err(|e| {
+            StratumV2Error::ProtocolError(format!("Failed to read length prefix: {}", e))
+        })?;
         let _total_length = u32::from_le_bytes(length_bytes);
 
         // Read tag (2 bytes, little-endian)
@@ -102,9 +102,9 @@ impl TlvDecoder {
 
         // Read payload length (4 bytes, little-endian)
         let mut length_bytes = [0u8; 4];
-        self.cursor
-            .read_exact(&mut length_bytes)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read payload length: {}", e)))?;
+        self.cursor.read_exact(&mut length_bytes).map_err(|e| {
+            StratumV2Error::ProtocolError(format!("Failed to read payload length: {}", e))
+        })?;
         let payload_len = u32::from_le_bytes(length_bytes) as usize;
 
         // Read payload
@@ -137,9 +137,9 @@ impl TlvDecoder {
 
         // Read payload length (4 bytes, little-endian)
         let mut length_bytes = [0u8; 4];
-        cursor
-            .read_exact(&mut length_bytes)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read payload length: {}", e)))?;
+        cursor.read_exact(&mut length_bytes).map_err(|e| {
+            StratumV2Error::ProtocolError(format!("Failed to read payload length: {}", e))
+        })?;
         let payload_len = u32::from_le_bytes(length_bytes) as usize;
 
         // Validate payload length
@@ -198,4 +198,3 @@ mod tests {
         assert_eq!(payload, decoded_payload.as_slice());
     }
 }
-

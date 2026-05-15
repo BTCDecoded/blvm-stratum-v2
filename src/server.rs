@@ -4,9 +4,9 @@ use crate::error::StratumV2Error;
 use crate::messages::StratumV2Message;
 use crate::pool::StratumV2Pool;
 use crate::template::BlockTemplateGenerator;
+use blvm_node::module::ipc::protocol::EventPayload;
 use blvm_node::module::ipc::protocol::ModuleMessage;
 use blvm_node::module::traits::{EventType, NodeAPI};
-use blvm_node::module::ipc::protocol::EventPayload;
 use blvm_protocol::{Block, Hash};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -37,10 +37,12 @@ impl StratumV2Server {
             .get_config_or("stratum_v2.difficulty_target", "1")
             .parse()
             .unwrap_or(1);
-        
-        let pool = Arc::new(RwLock::new(StratumV2Pool::with_default_difficulty(difficulty_target)));
+
+        let pool = Arc::new(RwLock::new(StratumV2Pool::with_default_difficulty(
+            difficulty_target,
+        )));
         let template_generator = Arc::new(BlockTemplateGenerator::new(Arc::clone(&node_api)));
-        
+
         Ok(Self {
             listen_addr,
             pool,
@@ -49,39 +51,41 @@ impl StratumV2Server {
             running: Arc::new(RwLock::new(false)),
         })
     }
-    
+
     /// Start the server
     pub async fn start(&self) -> Result<(), StratumV2Error> {
         let mut running = self.running.write().await;
         if *running {
-            return Err(StratumV2Error::ConfigError("Server already running".to_string()));
+            return Err(StratumV2Error::ConfigError(
+                "Server already running".to_string(),
+            ));
         }
-        
+
         info!("Starting Stratum V2 server on {}", self.listen_addr);
-        
+
         // Server startup:
         // 1. The node's network layer will handle incoming connections
         // 2. Messages will be routed to this module via IPC
         // 3. This module handles protocol messages via handle_message()
         // 4. For now, we mark the server as running and ready to accept messages
-        
+
         *running = true;
         info!("Stratum V2 server started and ready to accept connections");
         Ok(())
     }
-    
+
     /// Stop the server
     pub async fn stop(&self) -> Result<(), StratumV2Error> {
         let mut running = self.running.write().await;
         if !*running {
             return Ok(());
         }
-        
+
         info!("Stopping Stratum V2 server");
         *running = false;
         Ok(())
     }
-    
+
     /// Handle an event from the node
     pub async fn handle_event(
         &self,
@@ -93,26 +97,42 @@ impl StratumV2Server {
                 match event_msg.event_type {
                     EventType::BlockMined => {
                         debug!("Block mined event received");
-                        if let EventPayload::BlockMined { block_hash, height, .. } = &event_msg.payload {
-                            info!("Block mined: hash={:x?}, height={}", &block_hash[..8], height);
+                        if let EventPayload::BlockMined {
+                            block_hash, height, ..
+                        } = &event_msg.payload
+                        {
+                            info!(
+                                "Block mined: hash={:x?}, height={}",
+                                &block_hash[..8],
+                                height
+                            );
                             // Update pool with new block
                             // Notify miners of new block via SetNewPrevHashMessage
-                            if let Some(block) = node_api.get_block(block_hash).await
-                                .map_err(|e| StratumV2Error::ServerError(format!("Failed to get block: {}", e)))? {
+                            if let Some(block) =
+                                node_api.get_block(block_hash).await.map_err(|e| {
+                                    StratumV2Error::ServerError(format!(
+                                        "Failed to get block: {}",
+                                        e
+                                    ))
+                                })?
+                            {
                                 // Update pool with new block
                                 self.pool.write().await.set_template(block.clone());
-                                
+
                                 // Broadcast SetNewPrevHashMessage to all miners
                                 // Get all active miners and their channels
                                 let pool = self.pool.read().await;
-                                let miners: Vec<(String, Vec<u32>)> = pool.miners.iter()
+                                let miners: Vec<(String, Vec<u32>)> = pool
+                                    .miners
+                                    .iter()
                                     .map(|(endpoint, miner)| {
-                                        let channels: Vec<u32> = miner.channels.keys().cloned().collect();
+                                        let channels: Vec<u32> =
+                                            miner.channels.keys().cloned().collect();
                                         (endpoint.clone(), channels)
                                     })
                                     .collect();
                                 drop(pool);
-                                
+
                                 let min_txn_count = block.transactions.len() as u32;
                                 // Send SetNewPrevHashMessage to each miner's channels
                                 for (endpoint, channels) in miners {
@@ -123,23 +143,43 @@ impl StratumV2Server {
                                             prev_hash: *block_hash,
                                             min_txn_count,
                                         };
-                                        
+
                                         // Serialize and encode message
-                                        let payload = msg.to_bytes()
-                                            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to serialize SetNewPrevHash: {}", e)))?;
-                                        
+                                        let payload = msg.to_bytes().map_err(|e| {
+                                            StratumV2Error::ProtocolError(format!(
+                                                "Failed to serialize SetNewPrevHash: {}",
+                                                e
+                                            ))
+                                        })?;
+
                                         let mut encoder = crate::protocol::TlvEncoder::new();
-                                        let encoded = encoder.encode(msg.message_type(), &payload)
-                                            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to encode SetNewPrevHash: {}", e)))?;
-                                        
+                                        let encoded = encoder
+                                            .encode(msg.message_type(), &payload)
+                                            .map_err(|e| {
+                                                StratumV2Error::ProtocolError(format!(
+                                                    "Failed to encode SetNewPrevHash: {}",
+                                                    e
+                                                ))
+                                            })?;
+
                                         // Send message to miner via network layer
-                                        if let Err(e) = self.node_api.send_stratum_v2_message_to_peer(
-                                            endpoint.clone(),
-                                            encoded.clone(),
-                                        ).await {
-                                            warn!("Failed to send SetNewPrevHash to miner {}: {}", endpoint, e);
+                                        if let Err(e) = self
+                                            .node_api
+                                            .send_stratum_v2_message_to_peer(
+                                                endpoint.clone(),
+                                                encoded.clone(),
+                                            )
+                                            .await
+                                        {
+                                            warn!(
+                                                "Failed to send SetNewPrevHash to miner {}: {}",
+                                                endpoint, e
+                                            );
                                         } else {
-                                            debug!("Sent SetNewPrevHash to miner {} channel {}", endpoint, channel_id);
+                                            debug!(
+                                                "Sent SetNewPrevHash to miner {} channel {}",
+                                                endpoint, channel_id
+                                            );
                                         }
                                     }
                                 }
@@ -148,14 +188,19 @@ impl StratumV2Server {
                     }
                     EventType::BlockTemplateUpdated => {
                         debug!("Block template updated event received");
-                        if let EventPayload::BlockTemplateUpdated { prev_hash, height, tx_count } = &event_msg.payload {
+                        if let EventPayload::BlockTemplateUpdated {
+                            prev_hash,
+                            height,
+                            tx_count,
+                        } = &event_msg.payload
+                        {
                             info!(
                                 "Block template updated: prev_hash={:x?}, height={}, tx_count={}",
                                 &prev_hash[..8],
                                 height,
                                 tx_count
                             );
-                            
+
                             // Generate new block template
                             match self.template_generator.generate_template().await {
                                 Ok(template) => {
@@ -169,7 +214,12 @@ impl StratumV2Server {
                     }
                     EventType::MiningDifficultyChanged => {
                         debug!("Mining difficulty changed event received");
-                        if let EventPayload::MiningDifficultyChanged { old_difficulty, new_difficulty, height } = &event_msg.payload {
+                        if let EventPayload::MiningDifficultyChanged {
+                            old_difficulty,
+                            new_difficulty,
+                            height,
+                        } = &event_msg.payload
+                        {
                             info!(
                                 "Mining difficulty changed: old={}, new={}, height={}",
                                 old_difficulty, new_difficulty, height
@@ -189,20 +239,37 @@ impl StratumV2Server {
                     }
                     EventType::StratumV2MessageReceived => {
                         debug!("Stratum V2 message received event");
-                        if let EventPayload::StratumV2MessageReceived { message_data, peer_addr } = &event_msg.payload {
+                        if let EventPayload::StratumV2MessageReceived {
+                            message_data,
+                            peer_addr,
+                        } = &event_msg.payload
+                        {
                             // Handle incoming Stratum V2 message
-                            match self.handle_message(message_data.clone(), peer_addr.clone()).await {
+                            match self
+                                .handle_message(message_data.clone(), peer_addr.clone())
+                                .await
+                            {
                                 Ok(response_data) => {
                                     // Send response back to miner
-                                    if let Err(e) = self.node_api.send_stratum_v2_message_to_peer(
-                                        peer_addr.clone(),
-                                        response_data,
-                                    ).await {
-                                        warn!("Failed to send Stratum V2 response to {}: {}", peer_addr, e);
+                                    if let Err(e) = self
+                                        .node_api
+                                        .send_stratum_v2_message_to_peer(
+                                            peer_addr.clone(),
+                                            response_data,
+                                        )
+                                        .await
+                                    {
+                                        warn!(
+                                            "Failed to send Stratum V2 response to {}: {}",
+                                            peer_addr, e
+                                        );
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Failed to handle Stratum V2 message from {}: {}", peer_addr, e);
+                                    warn!(
+                                        "Failed to handle Stratum V2 message from {}: {}",
+                                        peer_addr, e
+                                    );
                                 }
                             }
                         }
@@ -216,10 +283,10 @@ impl StratumV2Server {
                 // Not an event message
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Update block template and distribute to miners
     async fn update_block_template(&self, template: Block) -> Result<(), StratumV2Error> {
         use crate::messages::{NewMiningJobMessage, StratumV2Message};
@@ -227,12 +294,17 @@ impl StratumV2Server {
 
         let mut pool = self.pool.write().await;
         let (job_id, job_distributions) = pool.set_template(template.clone());
-        
-        info!("Updated block template: job_id={}, channels={}", job_id, job_distributions.len());
-        
+
+        info!(
+            "Updated block template: job_id={}, channels={}",
+            job_id,
+            job_distributions.len()
+        );
+
         // Extract merkle path and coinbase from template
-        let (coinbase_prefix, coinbase_suffix, merkle_path) = self.extract_template_parts(&template);
-        
+        let (coinbase_prefix, coinbase_suffix, merkle_path) =
+            self.extract_template_parts(&template);
+
         // Send NewMiningJob messages to all channels
         for (endpoint, channel_id) in job_distributions {
             let job_msg = NewMiningJobMessage {
@@ -243,50 +315,64 @@ impl StratumV2Server {
                 coinbase_suffix: coinbase_suffix.clone(),
                 merkle_path: merkle_path.clone(),
             };
-            
+
             // Serialize message
-            let payload = job_msg.to_bytes()
-                .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to serialize job message: {}", e)))?;
-            
+            let payload = job_msg.to_bytes().map_err(|e| {
+                StratumV2Error::ProtocolError(format!("Failed to serialize job message: {}", e))
+            })?;
+
             // Encode with TLV
             let mut encoder = TlvEncoder::new();
-            let encoded = encoder.encode(job_msg.message_type(), &payload)
-                .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to encode job message: {}", e)))?;
-            
-            debug!("Prepared job {} for miner {} channel {}", job_id, endpoint, channel_id);
-            
+            let encoded = encoder
+                .encode(job_msg.message_type(), &payload)
+                .map_err(|e| {
+                    StratumV2Error::ProtocolError(format!("Failed to encode job message: {}", e))
+                })?;
+
+            debug!(
+                "Prepared job {} for miner {} channel {}",
+                job_id, endpoint, channel_id
+            );
+
             // Send encoded message to miner via network layer
-            if let Err(e) = self.node_api.send_stratum_v2_message_to_peer(endpoint.clone(), encoded.clone()).await {
+            if let Err(e) = self
+                .node_api
+                .send_stratum_v2_message_to_peer(endpoint.clone(), encoded.clone())
+                .await
+            {
                 warn!("Failed to send job message to miner {}: {}", endpoint, e);
             } else {
-                debug!("Sent job {} to miner {} channel {}", job_id, endpoint, channel_id);
+                debug!(
+                    "Sent job {} to miner {} channel {}",
+                    job_id, endpoint, channel_id
+                );
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Extract template parts for Stratum V2 job message (pub for tests)
     pub fn extract_template_parts(&self, template: &Block) -> (Vec<u8>, Vec<u8>, Vec<Hash>) {
         use sha2::{Digest, Sha256};
-        
+
         // For Stratum V2, we need to split the coinbase transaction
         // and provide merkle path for transaction inclusion
-        
+
         let coinbase = if !template.transactions.is_empty() {
             &template.transactions[0]
         } else {
             // No coinbase - return empty
             return (Vec::new(), Vec::new(), Vec::new());
         };
-        
+
         // Serialize coinbase transaction properly
         // For Stratum V2, we split at a specific point to allow miners to modify
         // the coinbase script while keeping the structure intact
         let coinbase_bytes = self.serialize_transaction(coinbase);
-        
+
         // Split coinbase for Stratum V2
-        // Split after: version (4) + input count (varint, typically 1 byte) + 
+        // Split after: version (4) + input count (varint, typically 1 byte) +
         // first input (prevout hash 32 + index 4 + script length varint + script + sequence 4)
         // We'll split after the script length varint, allowing miners to modify the script
         let mut split_point = 4; // version
@@ -308,14 +394,14 @@ impl StratumV2Server {
         if split_point >= coinbase_bytes.len() {
             split_point = coinbase_bytes.len() / 2;
         }
-        
+
         let coinbase_prefix = coinbase_bytes[..split_point].to_vec();
         let coinbase_suffix = coinbase_bytes[split_point..].to_vec();
-        
+
         // Calculate merkle path for transactions
         // Merkle path is the list of sibling hashes needed to compute merkle root from coinbase
         let mut merkle_path = Vec::new();
-        
+
         if template.transactions.len() > 1 {
             // Calculate transaction hashes (double SHA256)
             let mut tx_hashes = Vec::new();
@@ -327,16 +413,16 @@ impl StratumV2Server {
                 tx_hash.copy_from_slice(&hash2);
                 tx_hashes.push(tx_hash);
             }
-            
+
             // Build merkle tree and extract path from coinbase (index 0) to root
             // Track coinbase position through tree levels
             let mut level = tx_hashes;
             let mut coinbase_pos = 0; // Coinbase is always at index 0 in first level
-            
+
             while level.len() > 1 {
                 let mut next_level = Vec::new();
                 let mut sibling_hash: Option<Hash> = None;
-                
+
                 // Process pairs
                 for i in (0..level.len()).step_by(2) {
                     if i + 1 < level.len() {
@@ -348,7 +434,7 @@ impl StratumV2Server {
                         let mut parent_hash = [0u8; 32];
                         parent_hash.copy_from_slice(&hash2);
                         next_level.push(parent_hash);
-                        
+
                         // Track coinbase's sibling
                         let pair_index = i / 2;
                         if coinbase_pos == i {
@@ -371,7 +457,7 @@ impl StratumV2Server {
                         let mut parent_hash = [0u8; 32];
                         parent_hash.copy_from_slice(&hash2);
                         next_level.push(parent_hash);
-                        
+
                         // If coinbase is the odd one, no sibling
                         let pair_index = i / 2;
                         if coinbase_pos == i {
@@ -380,29 +466,29 @@ impl StratumV2Server {
                         }
                     }
                 }
-                
+
                 // Add sibling to path if found
                 if let Some(sibling) = sibling_hash {
                     merkle_path.push(sibling);
                 }
-                
+
                 level = next_level;
             }
         }
-        
+
         (coinbase_prefix, coinbase_suffix, merkle_path)
     }
-    
+
     /// Serialize transaction for hashing (matches consensus layer format)
     pub fn serialize_transaction(&self, tx: &blvm_protocol::Transaction) -> Vec<u8> {
         let mut data = Vec::new();
-        
+
         // Version (4 bytes, little-endian)
         data.extend_from_slice(&(tx.version as u32).to_le_bytes());
-        
+
         // Input count (varint)
         data.extend_from_slice(&self.encode_varint(tx.inputs.len() as u64));
-        
+
         // Inputs
         for input in &tx.inputs {
             // Previous output hash (32 bytes)
@@ -416,10 +502,10 @@ impl StratumV2Server {
             // Sequence (4 bytes, little-endian)
             data.extend_from_slice(&(input.sequence as u32).to_le_bytes());
         }
-        
+
         // Output count (varint)
         data.extend_from_slice(&self.encode_varint(tx.outputs.len() as u64));
-        
+
         // Outputs
         for output in &tx.outputs {
             // Value (8 bytes, little-endian)
@@ -429,13 +515,13 @@ impl StratumV2Server {
             // Script
             data.extend_from_slice(&output.script_pubkey);
         }
-        
+
         // Lock time (4 bytes, little-endian)
         data.extend_from_slice(&(tx.lock_time as u32).to_le_bytes());
-        
+
         data
     }
-    
+
     /// Encode varint (variable-length integer)
     pub fn encode_varint(&self, value: u64) -> Vec<u8> {
         let mut result = Vec::new();
@@ -453,7 +539,7 @@ impl StratumV2Server {
         }
         result
     }
-    
+
     /// Read varint from bytes
     pub fn read_varint(&self, data: &[u8]) -> (u64, usize) {
         if data.is_empty() {
@@ -489,7 +575,7 @@ impl StratumV2Server {
             _ => (0, 0),
         }
     }
-    
+
     /// Handle incoming Stratum V2 message
     pub async fn handle_message(
         &self,
@@ -498,10 +584,10 @@ impl StratumV2Server {
     ) -> Result<Vec<u8>, StratumV2Error> {
         use crate::messages::*;
         use crate::protocol::TlvDecoder;
-        
+
         // Decode TLV message
         let (tag, payload) = TlvDecoder::decode_raw(&data)?;
-        
+
         // Deserialize message based on tag
         let response_bytes = match tag {
             message_types::SETUP_CONNECTION => {
@@ -568,13 +654,16 @@ impl StratumV2Server {
                 }
             }
             _ => {
-                return Err(StratumV2Error::ProtocolError(format!("Unknown message type: {}", tag)));
+                return Err(StratumV2Error::ProtocolError(format!(
+                    "Unknown message type: {}",
+                    tag
+                )));
             }
         };
-        
+
         Ok(response_bytes)
     }
-    
+
     /// Handle Setup Connection message (pub for tests)
     pub async fn handle_setup_connection(
         &self,
@@ -588,7 +677,7 @@ impl StratumV2Server {
                 msg.protocol_version
             )));
         }
-        
+
         let mut pool = self.pool.write().await;
         pool.register_miner(endpoint.to_string());
 
@@ -609,7 +698,7 @@ impl StratumV2Server {
             capabilities: vec!["mining".to_string()],
         })
     }
-    
+
     /// Handle Open Mining Channel message (pub for tests)
     pub async fn handle_open_channel(
         &self,
@@ -618,7 +707,7 @@ impl StratumV2Server {
     ) -> Result<crate::messages::OpenMiningChannelSuccessMessage, StratumV2Error> {
         let mut pool = self.pool.write().await;
         let target = pool.open_channel(endpoint, msg.channel_id, msg.min_difficulty)?;
-        
+
         Ok(crate::messages::OpenMiningChannelSuccessMessage {
             channel_id: msg.channel_id,
             request_id: msg.request_id,
@@ -626,7 +715,7 @@ impl StratumV2Server {
             max_jobs: 10,
         })
     }
-    
+
     /// Handle Submit Shares message (pub for tests)
     pub async fn handle_submit_shares(
         &self,
@@ -634,13 +723,13 @@ impl StratumV2Server {
         msg: crate::messages::SubmitSharesMessage,
     ) -> Result<crate::messages::SubmitSharesSuccessMessage, StratumV2Error> {
         use crate::pool::ShareData;
-        
+
         let mut pool = self.pool.write().await;
-        
+
         // Process each share
         let mut last_job_id = 0;
         let mut has_valid_block = false;
-        
+
         for share in msg.shares {
             let share_data = ShareData {
                 channel_id: share.channel_id,
@@ -649,9 +738,10 @@ impl StratumV2Server {
                 version: share.version,
                 merkle_root: share.merkle_root,
             };
-            
-            let (is_valid_share, is_valid_block) = pool.handle_share(endpoint, share_data.clone())?;
-            
+
+            let (is_valid_share, is_valid_block) =
+                pool.handle_share(endpoint, share_data.clone())?;
+
             if is_valid_share {
                 if let Some(share_hash) = pool.get_share_hash(endpoint, &share_data) {
                     let payload = EventPayload::ShareSubmitted {
@@ -659,12 +749,16 @@ impl StratumV2Server {
                         share_hash,
                         miner_id: Some(endpoint.to_string()),
                     };
-                    if let Err(e) = self.node_api.publish_event(EventType::ShareSubmitted, payload).await {
+                    if let Err(e) = self
+                        .node_api
+                        .publish_event(EventType::ShareSubmitted, payload)
+                        .await
+                    {
                         debug!("Failed to publish ShareSubmitted: {}", e);
                     }
                 }
             }
-            
+
             if is_valid_block {
                 has_valid_block = true;
                 // Submit block to node and optionally to DATUM pool
@@ -675,25 +769,32 @@ impl StratumV2Server {
                     } else {
                         // When DATUM is loaded (pool mode), submit to pool
                         let block_bytes = bincode::serialize(&block).unwrap_or_default();
-                        if let Err(e) = self.node_api.call_module(None, "submit_pow", block_bytes).await {
-                            debug!("DATUM submit_pow not available or failed: {} (ok if solo mining)", e);
+                        if let Err(e) = self
+                            .node_api
+                            .call_module(None, "submit_pow", block_bytes)
+                            .await
+                        {
+                            debug!(
+                                "DATUM submit_pow not available or failed: {} (ok if solo mining)",
+                                e
+                            );
                         }
                     }
                 }
             }
-            
+
             last_job_id = share.job_id;
         }
-        
+
         // Cleanup old jobs periodically
         pool.cleanup_old_jobs();
-        
+
         Ok(crate::messages::SubmitSharesSuccessMessage {
             channel_id: msg.channel_id,
             last_job_id,
         })
     }
-    
+
     /// Reconstruct block from template and share data
     fn reconstruct_block_from_share(
         &self,
@@ -701,12 +802,12 @@ impl StratumV2Server {
         share: &crate::pool::ShareData,
     ) -> blvm_protocol::Block {
         use blvm_protocol::{Block, BlockHeader};
-        
+
         let mut header = template.header.clone();
         header.version = share.version as i64;
         header.merkle_root = share.merkle_root;
         header.nonce = share.nonce as u64;
-        
+
         Block {
             header,
             transactions: template.transactions.clone(),
@@ -720,7 +821,7 @@ impl StratumV2Server {
         share: &crate::pool::ShareData,
     ) -> Result<(), StratumV2Error> {
         let block = self.reconstruct_block_from_share(template, share);
-        
+
         // Submit to node
         match self.node_api.submit_block(block).await {
             Ok(result) => {
@@ -737,29 +838,24 @@ impl StratumV2Server {
                 }
                 Ok(())
             }
-            Err(e) => {
-                Err(StratumV2Error::ServerError(format!("Failed to submit block: {}", e)))
-            }
+            Err(e) => Err(StratumV2Error::ServerError(format!(
+                "Failed to submit block: {}",
+                e
+            ))),
         }
     }
-    
+
     /// Get mining pool statistics
     pub async fn get_pool_stats(&self) -> PoolStats {
         let pool = self.pool.read().await;
         PoolStats {
             miner_count: pool.miners.len(),
-            total_shares: pool.miners.values()
-                .map(|m| m.stats.total_shares)
-                .sum(),
-            accepted_shares: pool.miners.values()
-                .map(|m| m.stats.accepted_shares)
-                .sum(),
-            rejected_shares: pool.miners.values()
-                .map(|m| m.stats.rejected_shares)
-                .sum(),
+            total_shares: pool.miners.values().map(|m| m.stats.total_shares).sum(),
+            accepted_shares: pool.miners.values().map(|m| m.stats.accepted_shares).sum(),
+            rejected_shares: pool.miners.values().map(|m| m.stats.rejected_shares).sum(),
         }
     }
-    
+
     /// Get pool reference for cleanup operations
     /// Clean up disconnected miners and publish StratumClientDisconnected for each.
     pub async fn cleanup_and_publish_disconnected(&self, timeout_seconds: u64) {
@@ -787,10 +883,22 @@ impl StratumV2Server {
     }
 
     /// Register StratumV2ModuleAPI with the node for merge-mining integration.
-    pub async fn register_module_api(&self, node_api: &dyn NodeAPI) -> Result<(), crate::error::StratumV2Error> {
-        let stratum_api = Arc::new(crate::module_api::StratumV2ModuleAPI::new(Arc::clone(&self.pool)));
-        node_api.register_module_api(stratum_api).await
-            .map_err(|e| crate::error::StratumV2Error::ServerError(format!("Failed to register ModuleAPI: {}", e)))
+    pub async fn register_module_api(
+        &self,
+        node_api: &dyn NodeAPI,
+    ) -> Result<(), crate::error::StratumV2Error> {
+        let stratum_api = Arc::new(crate::module_api::StratumV2ModuleAPI::new(Arc::clone(
+            &self.pool,
+        )));
+        node_api
+            .register_module_api(stratum_api)
+            .await
+            .map_err(|e| {
+                crate::error::StratumV2Error::ServerError(format!(
+                    "Failed to register ModuleAPI: {}",
+                    e
+                ))
+            })
     }
 }
 
@@ -802,4 +910,3 @@ pub struct PoolStats {
     pub accepted_shares: u64,
     pub rejected_shares: u64,
 }
-

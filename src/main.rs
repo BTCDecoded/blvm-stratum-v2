@@ -26,14 +26,25 @@ async fn main() -> Result<()> {
             let listen_addr = config.listen_addr.clone();
             let server = StratumV2Server::new(&ctx, Arc::clone(&node_api))
                 .await
-                .map_err(|e| blvm_node::module::traits::ModuleError::Other(format!("Failed to create server: {}", e)))?;
+                .map_err(|e| {
+                    blvm_node::module::traits::ModuleError::Other(format!(
+                        "Failed to create server: {}",
+                        e
+                    ))
+                })?;
             if let Err(e) = server.start().await {
                 error!("Failed to start Stratum V2 server: {}", e);
-                return Err(blvm_node::module::traits::ModuleError::Other(format!("Server startup failed: {}", e)));
+                return Err(blvm_node::module::traits::ModuleError::Other(format!(
+                    "Server startup failed: {}",
+                    e
+                )));
             }
             tracing::info!("Stratum V2 module initialized and running");
             if let Err(e) = server.register_module_api(node_api.as_ref()).await {
-                warn!("Failed to register StratumV2ModuleAPI (merge-mining may not work): {}", e);
+                warn!(
+                    "Failed to register StratumV2ModuleAPI (merge-mining may not work): {}",
+                    e
+                );
             } else {
                 tracing::info!("StratumV2ModuleAPI registered for merge-mining");
             }

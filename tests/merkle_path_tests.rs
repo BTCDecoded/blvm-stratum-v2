@@ -2,14 +2,16 @@
 
 mod common;
 
+use blvm_protocol::{
+    Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput,
+};
 use blvm_stratum_v2::server::StratumV2Server;
-use blvm_protocol::{Block, BlockHeader, Transaction, OutPoint, TransactionInput, TransactionOutput};
 use common::MockNodeAPI;
 use std::sync::Arc;
 
 fn create_test_block_with_transactions(tx_count: usize) -> Block {
     let mut transactions = Vec::new();
-    
+
     // Create coinbase transaction
     let coinbase = Transaction {
         version: 1,
@@ -20,7 +22,8 @@ fn create_test_block_with_transactions(tx_count: usize) -> Block {
             },
             script_sig: vec![blvm_consensus::opcodes::PUSH_1_BYTE, 0x01],
             sequence: 0xFFFFFFFF,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 5000000000,
             script_pubkey: {
@@ -34,11 +37,12 @@ fn create_test_block_with_transactions(tx_count: usize) -> Block {
                 s.push(blvm_consensus::opcodes::OP_CHECKSIG);
                 s
             },
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
     transactions.push(coinbase);
-    
+
     // Create additional transactions
     for _ in 0..tx_count {
         let tx = Transaction {
@@ -50,7 +54,8 @@ fn create_test_block_with_transactions(tx_count: usize) -> Block {
                 },
                 script_sig: vec![0x01, 0x02],
                 sequence: 0xFFFFFFFF,
-            }].into(),
+            }]
+            .into(),
             outputs: vec![TransactionOutput {
                 value: 1000000,
                 script_pubkey: vec![
@@ -60,14 +65,18 @@ fn create_test_block_with_transactions(tx_count: usize) -> Block {
                 ]
                 .into_iter()
                 .chain(std::iter::repeat(0x00).take(20))
-                .chain([blvm_consensus::opcodes::OP_EQUALVERIFY, blvm_consensus::opcodes::OP_CHECKSIG])
+                .chain([
+                    blvm_consensus::opcodes::OP_EQUALVERIFY,
+                    blvm_consensus::opcodes::OP_CHECKSIG,
+                ])
                 .collect::<Vec<_>>(),
-            }].into(),
+            }]
+            .into(),
             lock_time: 0,
         };
         transactions.push(tx);
     }
-    
+
     Block {
         header: BlockHeader {
             version: 1,
@@ -89,10 +98,10 @@ async fn test_extract_template_parts_empty_block() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(MockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     let block = Block {
         header: BlockHeader {
             version: 1,
@@ -104,9 +113,9 @@ async fn test_extract_template_parts_empty_block() {
         },
         transactions: vec![].into_boxed_slice(),
     };
-    
+
     let (prefix, suffix, path) = server.extract_template_parts(&block);
-    
+
     // Empty block should return empty parts
     assert!(prefix.is_empty());
     assert!(suffix.is_empty());
@@ -121,14 +130,14 @@ async fn test_extract_template_parts_single_transaction() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(MockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     let block = create_test_block_with_transactions(0); // Only coinbase
-    
+
     let (prefix, suffix, path) = server.extract_template_parts(&block);
-    
+
     // Should have coinbase parts
     assert!(!prefix.is_empty());
     assert!(!suffix.is_empty());
@@ -144,20 +153,20 @@ async fn test_extract_template_parts_multiple_transactions() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(MockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     let block = create_test_block_with_transactions(3); // Coinbase + 3 transactions
-    
+
     let (prefix, suffix, path) = server.extract_template_parts(&block);
-    
+
     // Should have coinbase parts
     assert!(!prefix.is_empty());
     assert!(!suffix.is_empty());
     // Should have merkle path for multiple transactions
     assert!(!path.is_empty());
-    
+
     // Prefix + suffix should reconstruct coinbase
     let mut reconstructed = prefix.clone();
     reconstructed.extend_from_slice(&suffix);
@@ -172,10 +181,10 @@ async fn test_serialize_transaction() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(MockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
@@ -185,19 +194,21 @@ async fn test_serialize_transaction() {
             },
             script_sig: vec![0x01, 0x02],
             sequence: 0xFFFFFFFF,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000000,
             script_pubkey: vec![
                 blvm_consensus::opcodes::OP_DUP,
                 blvm_consensus::opcodes::OP_HASH160,
             ],
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
-    
+
     let serialized = server.serialize_transaction(&tx);
-    
+
     // Should serialize to bytes
     assert!(!serialized.is_empty());
     // Should start with version (4 bytes)
@@ -212,20 +223,20 @@ async fn test_varint_encoding() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(MockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Test small value (< 0xfd)
     let encoded = server.encode_varint(100);
     assert_eq!(encoded.len(), 1);
     assert_eq!(encoded[0], 100);
-    
+
     // Test medium value (0xfd - 0xffff)
     let encoded = server.encode_varint(1000);
     assert_eq!(encoded.len(), 3);
     assert_eq!(encoded[0], 0xfd);
-    
+
     // Test large value (> 0xffff)
     let encoded = server.encode_varint(100000);
     assert_eq!(encoded.len(), 5);
@@ -240,20 +251,19 @@ async fn test_varint_decoding() {
         data_dir: "test".to_string(),
         socket_path: "test".to_string(),
     };
-    
+
     let node_api = Arc::new(MockNodeAPI::default());
     let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
-    
+
     // Test small value
     let data = vec![100u8];
     let (value, bytes_read) = server.read_varint(&data);
     assert_eq!(value, 100);
     assert_eq!(bytes_read, 1);
-    
+
     // Test medium value
     let mut data = vec![0xfd, 0xe8, 0x03];
     let (value, bytes_read) = server.read_varint(&data);
     assert_eq!(value, 1000);
     assert_eq!(bytes_read, 3);
 }
-

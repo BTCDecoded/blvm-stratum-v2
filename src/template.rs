@@ -39,7 +39,9 @@ impl BlockTemplateGenerator {
                 coinbase_address,
             )
             .await
-            .map_err(|e| StratumV2Error::TemplateError(format!("Failed to get block template: {}", e)))?;
+            .map_err(|e| {
+                StratumV2Error::TemplateError(format!("Failed to get block template: {}", e))
+            })?;
 
         info!(
             "Got block template: height={}, {} transactions",
@@ -119,4 +121,3 @@ impl BlockTemplateGenerator {
         (None, Some(format!("hex:{}", script_hex)))
     }
 }
-

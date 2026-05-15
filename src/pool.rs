@@ -153,8 +153,9 @@ impl StratumV2Pool {
         // Calculate channel target before mutable borrow
         let channel_target = self.calculate_channel_target(effective)?;
 
-        let miner = self.miners.get_mut(endpoint)
-            .ok_or_else(|| StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint)))?;
+        let miner = self.miners.get_mut(endpoint).ok_or_else(|| {
+            StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint))
+        })?;
 
         let channel_info = ChannelInfo {
             channel_id,
@@ -166,8 +167,12 @@ impl StratumV2Pool {
         };
 
         miner.channels.insert(channel_id, channel_info.clone());
-        info!("Opened mining channel: miner={}, channel_id={}, target={:x?}", 
-            endpoint, channel_id, &channel_target[..8]);
+        info!(
+            "Opened mining channel: miner={}, channel_id={}, target={:x?}",
+            endpoint,
+            channel_id,
+            &channel_target[..8]
+        );
 
         Ok(channel_target)
     }
@@ -199,7 +204,11 @@ impl StratumV2Pool {
         // Store template
         self.current_template = Some(template);
 
-        info!("Created new mining job: job_id={}, channels={}", job_id, job_distributions.len());
+        info!(
+            "Created new mining job: job_id={}, channels={}",
+            job_id,
+            job_distributions.len()
+        );
         (job_id, job_distributions)
     }
 
@@ -212,20 +221,28 @@ impl StratumV2Pool {
         // Returns (is_valid_share, is_valid_block)
         // Extract data and update initial stats in a block to release mutable borrow
         let (job_info, channel_target, endpoint_key) = {
-            let miner = self.miners.get_mut(endpoint)
-                .ok_or_else(|| StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint)))?;
+            let miner = self.miners.get_mut(endpoint).ok_or_else(|| {
+                StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint))
+            })?;
 
             miner.stats.total_shares += 1;
-            miner.stats.last_share_time = Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs());
+            miner.stats.last_share_time = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
 
-            let channel = miner.channels.get(&share.channel_id)
-                .ok_or_else(|| StratumV2Error::ProtocolError(format!("Channel not found: {}", share.channel_id)))?;
+            let channel = miner.channels.get(&share.channel_id).ok_or_else(|| {
+                StratumV2Error::ProtocolError(format!("Channel not found: {}", share.channel_id))
+            })?;
 
-            let job_info = channel.jobs.get(&share.job_id)
-                .ok_or_else(|| StratumV2Error::ProtocolError(format!("Job not found: {}", share.job_id)))?
+            let job_info = channel
+                .jobs
+                .get(&share.job_id)
+                .ok_or_else(|| {
+                    StratumV2Error::ProtocolError(format!("Job not found: {}", share.job_id))
+                })?
                 .clone();
             let channel_target = channel.target.clone();
 
@@ -247,19 +264,28 @@ impl StratumV2Pool {
             if is_valid_share {
                 miner.stats.accepted_shares += 1;
                 if is_valid_block {
-                    info!("Valid block found from {}: channel={}, job={}", endpoint_key, share.channel_id, share.job_id);
+                    info!(
+                        "Valid block found from {}: channel={}, job={}",
+                        endpoint_key, share.channel_id, share.job_id
+                    );
                 } else {
-                    debug!("Accepted share from {}: channel={}, job={}", endpoint_key, share.channel_id, share.job_id);
+                    debug!(
+                        "Accepted share from {}: channel={}, job={}",
+                        endpoint_key, share.channel_id, share.job_id
+                    );
                 }
             } else {
                 miner.stats.rejected_shares += 1;
-                warn!("Rejected share from {}: channel={}, job={}", endpoint_key, share.channel_id, share.job_id);
+                warn!(
+                    "Rejected share from {}: channel={}, job={}",
+                    endpoint_key, share.channel_id, share.job_id
+                );
             }
         }
 
         Ok((is_valid_share, is_valid_block))
     }
-    
+
     /// Validate if share meets network difficulty (is a valid block)
     fn validate_block(&self, share: &ShareData, job_info: &JobInfo) -> bool {
         use blvm_consensus::ConsensusProof;
@@ -282,7 +308,7 @@ impl StratumV2Pool {
             Err(_) => false,
         }
     }
-    
+
     /// Clean up old jobs from channels
     /// Removes jobs older than max_jobs per channel
     pub fn cleanup_old_jobs(&mut self) {
@@ -294,7 +320,7 @@ impl StratumV2Pool {
                     let mut job_ids: Vec<u32> = channel.jobs.keys().cloned().collect();
                     job_ids.sort();
                     job_ids.reverse(); // Newest first
-                    
+
                     // Remove oldest jobs
                     let to_remove = job_ids.split_off(channel.max_jobs as usize);
                     for job_id in to_remove {
@@ -304,7 +330,7 @@ impl StratumV2Pool {
             }
         }
     }
-    
+
     /// Remove disconnected miners (those with no recent shares).
     /// Returns list of removed endpoint identifiers for event publishing.
     pub fn cleanup_disconnected_miners(&mut self, timeout_seconds: u64) -> Vec<String> {
@@ -385,7 +411,7 @@ impl StratumV2Pool {
         // Channel targets are typically easier than network targets
         // We need to check if the block hash is <= channel target
         let block_hash = self.calculate_block_hash(&header);
-        
+
         // Compare hashes as big-endian integers (lower hash = higher difficulty)
         // For share validation, we want hash <= target (easier than network difficulty)
         self.hash_less_than_or_equal(&block_hash, target)
@@ -455,29 +481,28 @@ impl StratumV2Pool {
         // Use proper consensus functions for target calculation
         // For channel targets, we adjust the difficulty to be easier than network difficulty
         // Channel targets are typically 10-100x easier for share validation
-        
+
         // Base target for channel validation. Use 0x0f00ffff (exponent 15) so channel
         // target is easier than block targets (e.g. 0x0f00ffff for tests). Must be >=
         // block target for valid blocks to pass share validation. Cast mantissa to u128
         // before shift to avoid overflow.
         let base_bits = 0x0f00ffffu32;
-        
+
         // For channel validation, we make the target easier (higher target value)
         // min_difficulty represents the minimum difficulty for share validation
         // Higher min_difficulty = easier target (for share validation)
-        
+
         // Calculate target multiplier: for min_difficulty=0, use max target (accept any block)
         // so tests can use genesis blocks (mainnet, etc.) without mining
         if min_difficulty == 0 {
             return Ok([0xFFu8; 32]);
         }
-        let difficulty_multiplier =
-            (min_difficulty as u64 * 100).min(10000);
-        
+        let difficulty_multiplier = (min_difficulty as u64 * 100).min(10000);
+
         // Expand base target from compact format using blvm-consensus logic
         let exponent = (base_bits >> 24) as u8;
         let mantissa = base_bits & 0x00ffffff;
-        
+
         let base_target = if exponent <= 3 {
             let shift = 8 * (3 - exponent);
             (mantissa >> shift) as u128
@@ -488,12 +513,14 @@ impl StratumV2Pool {
             }
             (mantissa as u128) << shift
         };
-        
+
         // Multiply target by difficulty multiplier (makes it easier)
         let channel_target = base_target
             .checked_mul(difficulty_multiplier as u128)
-            .ok_or_else(|| StratumV2Error::PoolError("Target multiplication overflow".to_string()))?;
-        
+            .ok_or_else(|| {
+                StratumV2Error::PoolError("Target multiplication overflow".to_string())
+            })?;
+
         // Convert to 32-byte hash (big-endian)
         // Target is stored as a 256-bit value, but we only need 32 bytes
         let mut target_bytes = [0u8; 32];
@@ -502,15 +529,16 @@ impl StratumV2Pool {
         let bytes_len = target_be_bytes.len();
         let start_idx = 32_usize.saturating_sub(bytes_len);
         let copy_len = (32 - start_idx).min(bytes_len);
-        target_bytes[start_idx..start_idx + copy_len].copy_from_slice(&target_be_bytes[bytes_len - copy_len..]);
-        
+        target_bytes[start_idx..start_idx + copy_len]
+            .copy_from_slice(&target_be_bytes[bytes_len - copy_len..]);
+
         // Clamp to maximum target (0xFFFF...FFFF) if overflow
         // For very easy targets, we might exceed 32 bytes, so clamp
         if channel_target > u128::MAX / 2 {
             // Use maximum target (all 0xFF)
             target_bytes = [0xFFu8; 32];
         }
-        
+
         Ok(target_bytes)
     }
 }

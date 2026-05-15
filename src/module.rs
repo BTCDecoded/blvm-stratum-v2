@@ -18,8 +18,19 @@ pub struct StratumV2Module {
 
 #[module]
 impl StratumV2Module {
-    #[on_event(BlockMined, BlockTemplateUpdated, MiningDifficultyChanged, MiningJobCreated, ShareSubmitted, StratumV2MessageReceived)]
-    async fn on_stratum_event(&self, event: &EventMessage, ctx: &InvocationContext) -> Result<(), ModuleError> {
+    #[on_event(
+        BlockMined,
+        BlockTemplateUpdated,
+        MiningDifficultyChanged,
+        MiningJobCreated,
+        ShareSubmitted,
+        StratumV2MessageReceived
+    )]
+    async fn on_stratum_event(
+        &self,
+        event: &EventMessage,
+        ctx: &InvocationContext,
+    ) -> Result<(), ModuleError> {
         let msg = ModuleMessage::Event(event.clone());
         let api = ctx.node_api().expect("node_api required");
         self.server
@@ -124,15 +135,24 @@ impl StratumV2Module {
 
     /// Set default difficulty for new channels.
     #[command]
-    fn set_difficulty(&self, _ctx: &InvocationContext, difficulty: u32) -> Result<String, ModuleError> {
+    fn set_difficulty(
+        &self,
+        _ctx: &InvocationContext,
+        difficulty: u32,
+    ) -> Result<String, ModuleError> {
         if difficulty == 0 {
-            return Err(ModuleError::Other("Usage: set-difficulty <value> (positive integer)".into()));
+            return Err(ModuleError::Other(
+                "Usage: set-difficulty <value> (positive integer)".into(),
+            ));
         }
         let server = Arc::clone(&self.server);
         run_async(async move {
             let pool = server.get_pool();
             pool.write().await.set_default_difficulty(difficulty);
-            Ok::<_, String>(format!("Default difficulty set to {} for new channels", difficulty))
+            Ok::<_, String>(format!(
+                "Default difficulty set to {} for new channels",
+                difficulty
+            ))
         })
     }
 }

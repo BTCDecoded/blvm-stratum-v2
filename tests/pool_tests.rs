@@ -1,10 +1,8 @@
 //! Tests for Stratum V2 Pool
 
-use blvm_stratum_v2::messages::{
-    OpenMiningChannelMessage, SetupConnectionMessage,
-};
-use blvm_stratum_v2::pool::{MinerStats, StratumV2Pool};
 use blvm_protocol::{Block, BlockHeader};
+use blvm_stratum_v2::messages::{OpenMiningChannelMessage, SetupConnectionMessage};
+use blvm_stratum_v2::pool::{MinerStats, StratumV2Pool};
 
 fn create_test_block() -> Block {
     Block {
@@ -30,9 +28,9 @@ async fn test_stratum_v2_pool_new() {
 #[tokio::test]
 async fn test_stratum_v2_pool_register_miner() {
     let mut pool = StratumV2Pool::new();
-    
+
     pool.register_miner("test-miner".to_string());
-    
+
     // Miner should be registered
     assert!(pool.miners.contains_key("test-miner"));
 }
@@ -40,14 +38,14 @@ async fn test_stratum_v2_pool_register_miner() {
 #[tokio::test]
 async fn test_stratum_v2_pool_open_channel() {
     let mut pool = StratumV2Pool::new();
-    
+
     // First register miner
     pool.register_miner("test-miner".to_string());
-    
+
     // Then open channel
     let result = pool.open_channel("test-miner", 1, 1);
     assert!(result.is_ok());
-    
+
     let target = result.unwrap();
     // Target should be non-zero
     assert_ne!(target, [0u8; 32]);
@@ -56,7 +54,7 @@ async fn test_stratum_v2_pool_open_channel() {
 #[tokio::test]
 async fn test_stratum_v2_pool_open_channel_no_miner() {
     let mut pool = StratumV2Pool::new();
-    
+
     // Should fail if miner not registered
     let result = pool.open_channel("unknown-miner", 1, 1);
     assert!(result.is_err());
@@ -66,9 +64,9 @@ async fn test_stratum_v2_pool_open_channel_no_miner() {
 async fn test_stratum_v2_pool_set_template() {
     let mut pool = StratumV2Pool::new();
     let block = create_test_block();
-    
+
     let (job_id, distributions) = pool.set_template(block);
-    
+
     // Should return job_id and distributions
     assert!(job_id > 0);
     assert!(distributions.is_empty()); // No miners connected yet
@@ -82,4 +80,3 @@ async fn test_miner_stats_default() {
     assert_eq!(stats.rejected_shares, 0);
     assert!(stats.last_share_time.is_none());
 }
-

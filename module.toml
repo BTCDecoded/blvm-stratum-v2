@@ -1,5 +1,5 @@
 name = "blvm-stratum-v2"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stratum V2 mining protocol module for blvm-node"
 author = "Bitcoin Commons Team"
 entry_point = "blvm-stratum-v2"
@@ -11,8 +11,6 @@ capabilities = [
 
 # CI fills url/sha256 on release — do not treat empty entries as real installs.
 [downloads]
-x86_64-linux   = { url = "", sha256 = "" }
-aarch64-linux  = { url = "", sha256 = "" }
-x86_64-windows = { url = "", sha256 = "" }
-
-# Note: Merge mining is now a separate module (blvm-merge-mining) that depends on this module
+x86_64-linux  = { url = "https://github.com/BTCDecoded/blvm-stratum-v2/releases/download/v0.1.1/blvm-stratum-v2-x86_64-linux", sha256 = "b167b1f3733308161b60d038340888fffb4f8803f1019bbc8d1650f7ac0e8e5b" }
+aarch64-linux = { url = "https://github.com/BTCDecoded/blvm-stratum-v2/releases/download/v0.1.1/blvm-stratum-v2-aarch64-linux", sha256 = "dcd3f95069c14d5c3117abb6000263fbb99f8e4fc43ea161bedb1f8bf27136aa" }
+x86_64-windows= { url = "https://github.com/BTCDecoded/blvm-stratum-v2/releases/download/v0.1.1/blvm-stratum-v2-x86_64-windows.exe", sha256 = "d1e5f28d860c43ad70ed326bf4e032f7ec054ec4094cc8dc16c948a6b180e217" }

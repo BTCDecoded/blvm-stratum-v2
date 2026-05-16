@@ -80,6 +80,10 @@ listen_addr = "0.0.0.0:3333"
 - `enabled`: Enable or disable the module (default: `false`)
 - `listen_addr`: Address to listen for Stratum V2 connections (default: `0.0.0.0:3333`)
 
+### Node `[stratum_v2]`
+
+The node does **not** bind a dedicated Stratum miner port; **`listen_addr`** there is informational / merge-mining related. Miners connect to **this module’s** `listen_addr`. Outbound Stratum-shaped bytes to P2P peers use **`NodeAPI::send_peer_transport_payload`**. See **`docs/STRATUM_V2_DECOUPLING_PLAN.md`** (umbrella repo) and **`blvm/CONFIGURATION.md`**.
+
 ## Module Manifest
 
 The module manifest (`module.toml`) defines:
@@ -124,7 +128,7 @@ The module subscribes to these node events:
 - **BlockMined**: Block successfully mined - updates pool and notifies miners
 - **BlockTemplateUpdated**: New block template available - generates and distributes jobs
 - **MiningDifficultyChanged**: Mining difficulty changed - updates pool settings
-- **StratumV2MessageReceived**: Message from miner - processes protocol messages
+- **StratumV2MessageReceived**: Stratum TLV from P2P (or historical paths) — processes protocol messages
 
 ### Published Events
 

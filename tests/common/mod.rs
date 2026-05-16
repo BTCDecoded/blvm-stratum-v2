@@ -343,7 +343,7 @@ impl NodeAPI for MockNodeAPI {
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn send_stratum_v2_message_to_peer(
+    async fn send_peer_transport_payload(
         &self,
         _: String,
         _: Vec<u8>,
@@ -781,12 +781,12 @@ impl NodeAPI for SubmittingMockNodeAPI {
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         self.inner.send_mesh_packet_to_peer(a, p).await
     }
-    async fn send_stratum_v2_message_to_peer(
+    async fn send_peer_transport_payload(
         &self,
         a: String,
         p: Vec<u8>,
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        self.inner.send_stratum_v2_message_to_peer(a, p).await
+        self.inner.send_peer_transport_payload(a, p).await
     }
     async fn get_block_template(
         &self,

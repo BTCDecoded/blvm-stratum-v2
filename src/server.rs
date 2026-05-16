@@ -8,9 +8,17 @@ use blvm_node::module::ipc::protocol::EventPayload;
 use blvm_node::module::ipc::protocol::ModuleMessage;
 use blvm_node::module::traits::{EventType, NodeAPI};
 use blvm_protocol::{Block, Hash};
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+
+/// Max TLV frame body (after 4-byte LE length prefix); same cap as the historical in-node listener.
+const MAX_STRATUM_FRAME_BODY: usize = 1024 * 1024;
 
 /// Stratum V2 server
 pub struct StratumV2Server {
@@ -24,14 +32,18 @@ pub struct StratumV2Server {
     template_generator: Arc<BlockTemplateGenerator>,
     /// Whether server is running
     running: Arc<RwLock<bool>>,
+    /// Module-owned miner TCP: responses go here first; key is `SocketAddr::to_string()`.
+    local_miner_tx: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>>,
+    /// Actual bound address after module TCP `bind` (set for `127.0.0.1:0` / tests; `None` if bind failed or not started).
+    module_tcp_bound_addr: Arc<RwLock<Option<SocketAddr>>>,
 }
 
 impl StratumV2Server {
-    /// Create a new Stratum V2 server
+    /// Create a new Stratum V2 server (wrapping in [`Arc`] for listener tasks and `start`).
     pub async fn new(
         ctx: &blvm_node::module::traits::ModuleContext,
         node_api: Arc<dyn NodeAPI>,
-    ) -> Result<Self, StratumV2Error> {
+    ) -> Result<Arc<Self>, StratumV2Error> {
         let listen_addr = ctx.get_config_or("stratum_v2.listen_addr", "0.0.0.0:3333");
         let difficulty_target: u32 = ctx
             .get_config_or("stratum_v2.difficulty_target", "1")
@@ -43,17 +55,47 @@ impl StratumV2Server {
         )));
         let template_generator = Arc::new(BlockTemplateGenerator::new(Arc::clone(&node_api)));
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             listen_addr,
             pool,
             node_api,
             template_generator,
             running: Arc::new(RwLock::new(false)),
-        })
+            local_miner_tx: Arc::new(RwLock::new(HashMap::new())),
+            module_tcp_bound_addr: Arc::new(RwLock::new(None)),
+        }))
     }
 
-    /// Start the server
-    pub async fn start(&self) -> Result<(), StratumV2Error> {
+    /// OS-assigned local address when module TCP is listening (`None` if bind failed or before `start`).
+    pub async fn module_tcp_local_addr(&self) -> Option<SocketAddr> {
+        *self.module_tcp_bound_addr.read().await
+    }
+
+    /// Send Stratum wire bytes to a miner: **module-owned TCP first**, then `NodeAPI::send_peer_transport_payload` (P2P / transport).
+    pub async fn send_to_miner(
+        &self,
+        endpoint: &str,
+        data: Vec<u8>,
+    ) -> Result<(), StratumV2Error> {
+        {
+            let map = self.local_miner_tx.read().await;
+            if let Some(tx) = map.get(endpoint) {
+                tx.send(data)
+                    .map_err(|_| StratumV2Error::ServerError("local miner channel closed".into()))?;
+                return Ok(());
+            }
+        }
+        self.node_api
+            .send_peer_transport_payload(endpoint.to_string(), data)
+            .await
+            .map_err(|e| StratumV2Error::ServerError(format!("NodeAPI peer transport send: {}", e)))
+    }
+
+    /// Start module-owned Stratum TCP (length-prefixed TLV framing; see module `handle_message`).
+    ///
+    /// If bind fails (e.g. address in use), logs a warning
+    /// and continues — inbound still works via `StratumV2MessageReceived` (e.g. P2P).
+    pub async fn start(self: &Arc<Self>) -> Result<(), StratumV2Error> {
         let mut running = self.running.write().await;
         if *running {
             return Err(StratumV2Error::ConfigError(
@@ -61,16 +103,120 @@ impl StratumV2Server {
             ));
         }
 
-        info!("Starting Stratum V2 server on {}", self.listen_addr);
+        let listen_addr: SocketAddr = self.listen_addr.parse().map_err(|e| {
+            StratumV2Error::ConfigError(format!("Invalid stratum_v2.listen_addr: {}", e))
+        })?;
 
-        // Server startup:
-        // 1. The node's network layer will handle incoming connections
-        // 2. Messages will be routed to this module via IPC
-        // 3. This module handles protocol messages via handle_message()
-        // 4. For now, we mark the server as running and ready to accept messages
+        let listener = match TcpListener::bind(listen_addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                warn!(
+                    "Stratum module TCP bind failed on {} ({}): miner TCP disabled; inbound only via \
+                     `StratumV2MessageReceived` (e.g. P2P). Use a free port or change `listen_addr`.",
+                    self.listen_addr, e
+                );
+                *self.module_tcp_bound_addr.write().await = None;
+                *running = true;
+                return Ok(());
+            }
+        };
+
+        let local = listener.local_addr().map_err(|e| {
+            StratumV2Error::ConfigError(format!("Stratum module TCP local_addr: {}", e))
+        })?;
+        *self.module_tcp_bound_addr.write().await = Some(local);
+
+        info!(
+            "Stratum V2 module TCP listener on {} (requested {}; parallel to node path until legacy retired)",
+            local, self.listen_addr
+        );
 
         *running = true;
-        info!("Stratum V2 server started and ready to accept connections");
+        drop(running);
+
+        let server = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, peer_addr)) => {
+                        info!("Stratum V2 (module TCP) connection from {}", peer_addr);
+
+                        let endpoint = peer_addr.to_string();
+                        let (miner_tx, mut miner_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                        {
+                            let mut map = server.local_miner_tx.write().await;
+                            map.insert(endpoint.clone(), miner_tx.clone());
+                        }
+
+                        let (mut reader, mut writer) = stream.into_split();
+                        let map_cleanup = Arc::clone(&server.local_miner_tx);
+                        let ep_write = endpoint.clone();
+
+                        tokio::spawn(async move {
+                            while let Some(data) = miner_rx.recv().await {
+                                if writer.write_all(&data).await.is_err() {
+                                    break;
+                                }
+                            }
+                            let mut m = map_cleanup.write().await;
+                            m.remove(&ep_write);
+                            debug!("Stratum module TCP writer ended: {}", ep_write);
+                        });
+
+                        let server_read = Arc::clone(&server);
+                        let ep_read = endpoint.clone();
+                        let miner_tx_read = miner_tx.clone();
+                        tokio::spawn(async move {
+                            let mut hdr = vec![0u8; 4];
+                            loop {
+                                if reader.read_exact(&mut hdr).await.is_err() {
+                                    break;
+                                }
+                                let frame_len = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]])
+                                    as usize;
+                                if frame_len < 6 || frame_len > MAX_STRATUM_FRAME_BODY {
+                                    warn!(
+                                        "Invalid Stratum V2 frame length {} from {}",
+                                        frame_len, ep_read
+                                    );
+                                    break;
+                                }
+                                let mut frame = vec![0u8; 4 + frame_len];
+                                frame[0..4].copy_from_slice(&hdr);
+                                if reader.read_exact(&mut frame[4..]).await.is_err() {
+                                    break;
+                                }
+                                let inner = frame[4..].to_vec();
+                                match server_read
+                                    .handle_message(inner, ep_read.clone())
+                                    .await
+                                {
+                                    Ok(response_data) => {
+                                        if miner_tx_read.send(response_data).is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "handle_message failed for module TCP {}: {}",
+                                            ep_read, e
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                            let mut m = server_read.local_miner_tx.write().await;
+                            m.remove(&ep_read);
+                            debug!("Stratum module TCP read ended: {}", ep_read);
+                        });
+                    }
+                    Err(e) => {
+                        error!("Stratum module TCP accept error: {}", e);
+                    }
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -162,13 +308,9 @@ impl StratumV2Server {
                                                 ))
                                             })?;
 
-                                        // Send message to miner via network layer
+                                        // Send message to miner (module TCP first, then node path)
                                         if let Err(e) = self
-                                            .node_api
-                                            .send_stratum_v2_message_to_peer(
-                                                endpoint.clone(),
-                                                encoded.clone(),
-                                            )
+                                            .send_to_miner(&endpoint, encoded.clone())
                                             .await
                                         {
                                             warn!(
@@ -252,11 +394,7 @@ impl StratumV2Server {
                                 Ok(response_data) => {
                                     // Send response back to miner
                                     if let Err(e) = self
-                                        .node_api
-                                        .send_stratum_v2_message_to_peer(
-                                            peer_addr.clone(),
-                                            response_data,
-                                        )
+                                        .send_to_miner(peer_addr, response_data)
                                         .await
                                     {
                                         warn!(
@@ -335,11 +473,7 @@ impl StratumV2Server {
             );
 
             // Send encoded message to miner via network layer
-            if let Err(e) = self
-                .node_api
-                .send_stratum_v2_message_to_peer(endpoint.clone(), encoded.clone())
-                .await
-            {
+            if let Err(e) = self.send_to_miner(&endpoint, encoded.clone()).await {
                 warn!("Failed to send job message to miner {}: {}", endpoint, e);
             } else {
                 debug!(

@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
             } else {
                 tracing::info!("StratumV2ModuleAPI registered for merge-mining");
             }
-            let server = Arc::new(server);
             let module = StratumV2Module {
                 server: Arc::clone(&server),
                 listen_addr,

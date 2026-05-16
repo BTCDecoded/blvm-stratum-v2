@@ -51,7 +51,7 @@ Handles events from the node:
 - `BlockMined`: Updates pool and notifies miners of new block
 - `BlockTemplateUpdated`: Generates and distributes new jobs
 - `MiningDifficultyChanged`: Updates pool difficulty settings
-- `StratumV2MessageReceived`: Processes messages from miners
+- `StratumV2MessageReceived`: Stratum-shaped bytes **from P2P** (or similar ingress); **miner TCP** connections are handled in **`handle_message`** / the module listener—see **`start()`**
 
 **Message Handling:**
 

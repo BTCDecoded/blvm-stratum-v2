@@ -431,7 +431,7 @@ impl NodeAPI for MockDatumNodeAPI {
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn send_stratum_v2_message_to_peer(
+    async fn send_peer_transport_payload(
         &self,
         _: String,
         _: Vec<u8>,

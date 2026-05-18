@@ -72,16 +72,13 @@ impl StratumV2Server {
     }
 
     /// Send Stratum wire bytes to a miner: **module-owned TCP first**, then `NodeAPI::send_peer_transport_payload` (P2P / transport).
-    pub async fn send_to_miner(
-        &self,
-        endpoint: &str,
-        data: Vec<u8>,
-    ) -> Result<(), StratumV2Error> {
+    pub async fn send_to_miner(&self, endpoint: &str, data: Vec<u8>) -> Result<(), StratumV2Error> {
         {
             let map = self.local_miner_tx.read().await;
             if let Some(tx) = map.get(endpoint) {
-                tx.send(data)
-                    .map_err(|_| StratumV2Error::ServerError("local miner channel closed".into()))?;
+                tx.send(data).map_err(|_| {
+                    StratumV2Error::ServerError("local miner channel closed".into())
+                })?;
                 return Ok(());
             }
         }
@@ -172,9 +169,9 @@ impl StratumV2Server {
                                 if reader.read_exact(&mut hdr).await.is_err() {
                                     break;
                                 }
-                                let frame_len = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]])
-                                    as usize;
-                                if frame_len < 6 || frame_len > MAX_STRATUM_FRAME_BODY {
+                                let frame_len =
+                                    u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+                                if !(6..=MAX_STRATUM_FRAME_BODY).contains(&frame_len) {
                                     warn!(
                                         "Invalid Stratum V2 frame length {} from {}",
                                         frame_len, ep_read
@@ -187,10 +184,7 @@ impl StratumV2Server {
                                     break;
                                 }
                                 let inner = frame[4..].to_vec();
-                                match server_read
-                                    .handle_message(inner, ep_read.clone())
-                                    .await
-                                {
+                                match server_read.handle_message(inner, ep_read.clone()).await {
                                     Ok(response_data) => {
                                         if miner_tx_read.send(response_data).is_err() {
                                             break;
@@ -309,9 +303,8 @@ impl StratumV2Server {
                                             })?;
 
                                         // Send message to miner (module TCP first, then node path)
-                                        if let Err(e) = self
-                                            .send_to_miner(&endpoint, encoded.clone())
-                                            .await
+                                        if let Err(e) =
+                                            self.send_to_miner(&endpoint, encoded.clone()).await
                                         {
                                             warn!(
                                                 "Failed to send SetNewPrevHash to miner {}: {}",
@@ -393,9 +386,8 @@ impl StratumV2Server {
                             {
                                 Ok(response_data) => {
                                     // Send response back to miner
-                                    if let Err(e) = self
-                                        .send_to_miner(peer_addr, response_data)
-                                        .await
+                                    if let Err(e) =
+                                        self.send_to_miner(peer_addr, response_data).await
                                     {
                                         warn!(
                                             "Failed to send Stratum V2 response to {}: {}",
@@ -520,7 +512,7 @@ impl StratumV2Server {
         }
         if coinbase_bytes.len() > split_point {
             // Read script length varint (1-9 bytes)
-            let (script_len, script_len_bytes) = self.read_varint(&coinbase_bytes[split_point..]);
+            let (_script_len, script_len_bytes) = self.read_varint(&coinbase_bytes[split_point..]);
             split_point += script_len_bytes;
         }
         // Split after script length - miners can modify script
@@ -628,7 +620,7 @@ impl StratumV2Server {
             // Previous output hash (32 bytes)
             data.extend_from_slice(&input.prevout.hash);
             // Previous output index (4 bytes, little-endian)
-            data.extend_from_slice(&(input.prevout.index as u32).to_le_bytes());
+            data.extend_from_slice(&input.prevout.index.to_le_bytes());
             // Script length (varint)
             data.extend_from_slice(&self.encode_varint(input.script_sig.len() as u64));
             // Script
@@ -862,7 +854,6 @@ impl StratumV2Server {
 
         // Process each share
         let mut last_job_id = 0;
-        let mut has_valid_block = false;
 
         for share in msg.shares {
             let share_data = ShareData {
@@ -894,7 +885,6 @@ impl StratumV2Server {
             }
 
             if is_valid_block {
-                has_valid_block = true;
                 // Submit block to node and optionally to DATUM pool
                 if let Some(template) = pool.current_template() {
                     let block = self.reconstruct_block_from_share(template, &share_data);
@@ -935,10 +925,10 @@ impl StratumV2Server {
         template: &blvm_protocol::Block,
         share: &crate::pool::ShareData,
     ) -> blvm_protocol::Block {
-        use blvm_protocol::{Block, BlockHeader};
+        use blvm_protocol::Block;
 
         let mut header = template.header.clone();
-        header.version = share.version as i64;
+        header.version = share.version;
         header.merkle_root = share.merkle_root;
         header.nonce = share.nonce as u64;
 

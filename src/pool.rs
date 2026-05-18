@@ -1,6 +1,7 @@
 //! Mining pool management for Stratum V2
 
 use crate::error::StratumV2Error;
+pub use crate::messages::ShareData;
 use blvm_protocol::{Block, Hash};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -47,7 +48,7 @@ pub struct ChannelInfo {
 }
 
 /// Miner statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MinerStats {
     /// Total shares submitted
     pub total_shares: u64,
@@ -57,32 +58,6 @@ pub struct MinerStats {
     pub rejected_shares: u64,
     /// Last share timestamp
     pub last_share_time: Option<u64>,
-}
-
-impl Default for MinerStats {
-    fn default() -> Self {
-        Self {
-            total_shares: 0,
-            accepted_shares: 0,
-            rejected_shares: 0,
-            last_share_time: None,
-        }
-    }
-}
-
-/// Share data for submission
-#[derive(Debug, Clone)]
-pub struct ShareData {
-    /// Channel identifier
-    pub channel_id: u32,
-    /// Job identifier
-    pub job_id: u32,
-    /// Nonce
-    pub nonce: u32,
-    /// Version
-    pub version: i64,
-    /// Merkle root
-    pub merkle_root: Hash,
 }
 
 /// Stratum V2 pool implementation
@@ -188,16 +163,16 @@ impl StratumV2Pool {
             job_id,
             prev_hash: template.header.prev_block_hash,
             bits: template.header.bits as u32,
-            timestamp: template.header.timestamp as u64,
+            timestamp: template.header.timestamp,
         };
 
         // Distribute job to all open channels
         let mut job_distributions = Vec::new();
-        for (endpoint, miner) in &mut self.miners {
+        for miner in self.miners.values_mut() {
             for (channel_id, channel) in &mut miner.channels {
                 channel.current_job_id = Some(job_id);
                 channel.jobs.insert(job_id, job_info.clone());
-                job_distributions.push((endpoint.clone(), *channel_id));
+                job_distributions.push((miner.endpoint.clone(), *channel_id));
             }
         }
 
@@ -244,7 +219,7 @@ impl StratumV2Pool {
                     StratumV2Error::ProtocolError(format!("Job not found: {}", share.job_id))
                 })?
                 .clone();
-            let channel_target = channel.target.clone();
+            let channel_target = channel.target;
 
             (job_info, channel_target, endpoint.to_string())
         };
@@ -303,17 +278,14 @@ impl StratumV2Pool {
 
         // Verify proof of work using consensus (validates against network target)
         let consensus = ConsensusProof::new();
-        match consensus.check_proof_of_work(&header) {
-            Ok(pow_valid) => pow_valid,
-            Err(_) => false,
-        }
+        consensus.check_proof_of_work(&header).unwrap_or_default()
     }
 
     /// Clean up old jobs from channels
     /// Removes jobs older than max_jobs per channel
     pub fn cleanup_old_jobs(&mut self) {
-        for (_endpoint, miner) in &mut self.miners {
-            for (_channel_id, channel) in &mut miner.channels {
+        for miner in self.miners.values_mut() {
+            for channel in miner.channels.values_mut() {
                 // Keep only the most recent max_jobs
                 if channel.jobs.len() > channel.max_jobs as usize {
                     // Sort jobs by ID (higher ID = newer)

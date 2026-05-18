@@ -82,7 +82,7 @@ listen_addr = "0.0.0.0:3333"
 
 ### Node `[stratum_v2]`
 
-The node does **not** bind a dedicated Stratum miner port; **`listen_addr`** there is informational / merge-mining related. Miners connect to **this module’s** `listen_addr`. Outbound Stratum-shaped bytes to P2P peers use **`NodeAPI::send_peer_transport_payload`**. See **[`blvm/CONFIGURATION.md`](https://github.com/BTCDecoded/blvm/blob/main/CONFIGURATION.md)** and the **blvm-docs** [Stratum V2 + Merge Mining](https://github.com/BTCDecoded/blvm-docs/blob/main/src/node/mining-stratum-v2.md) page.
+The node does **not** bind a dedicated Stratum miner port; **`listen_addr`** there is informational / merge-mining related. Miners connect to **this module’s** `listen_addr`. Optional **P2P Stratum TLV demux** is controlled on the node by **`[stratum_v2].p2p_stratum_demux`** (default `true`). Outbound Stratum-shaped bytes to P2P peers use **`NodeAPI::send_peer_transport_payload`**. See **[`blvm/CONFIGURATION.md`](https://github.com/BTCDecoded/blvm/blob/main/CONFIGURATION.md)** and the **blvm-docs** [Stratum V2 + Merge Mining](https://github.com/BTCDecoded/blvm-docs/blob/main/src/node/mining-stratum-v2.md) page.
 
 ## Module Manifest
 

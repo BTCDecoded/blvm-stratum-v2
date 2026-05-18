@@ -2,9 +2,9 @@
 
 use crate::error::StratumV2Error;
 use blvm_node::module::traits::NodeAPI;
-use blvm_protocol::{Block, BlockHeader, Hash, Transaction};
+use blvm_protocol::Block;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Block template generator
 pub struct BlockTemplateGenerator {

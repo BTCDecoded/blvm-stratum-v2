@@ -36,7 +36,7 @@ impl StratumV2Module {
         self.server
             .handle_event(&msg, api.as_ref())
             .await
-            .map_err(|e| ModuleError::Other(e.to_string().into()))
+            .map_err(|e| ModuleError::Other(e.to_string()))
     }
 
     /// Show server state, connected miners, pool stats.

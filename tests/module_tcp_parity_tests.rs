@@ -4,16 +4,16 @@
 
 mod common;
 
+use blvm_protocol::{
+    Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput,
+};
 use blvm_stratum_v2::{
     messages::{
-        self, message_types, OpenMiningChannelMessage, SetupConnectionMessage,
-        StratumV2Message, SubmitSharesMessage,
+        self, message_types, OpenMiningChannelMessage, SetupConnectionMessage, StratumV2Message,
+        SubmitSharesMessage,
     },
     protocol::TlvEncoder,
     server::StratumV2Server,
-};
-use blvm_protocol::{
-    Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput,
 };
 use common::SubmittingMockNodeAPI;
 use std::collections::HashMap;
@@ -113,10 +113,7 @@ async fn module_tcp_setup_roundtrip_matches_handle_message_bytes() {
     let mut stream = TcpStream::connect(bind).await.unwrap();
     let endpoint = stream.local_addr().unwrap().to_string();
 
-    let expected_response = server
-        .handle_message(inner, endpoint)
-        .await
-        .unwrap();
+    let expected_response = server.handle_message(inner, endpoint).await.unwrap();
 
     stream.write_all(&request_wire).await.unwrap();
 

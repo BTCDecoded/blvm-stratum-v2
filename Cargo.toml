@@ -1,6 +1,6 @@
 [package]
 name = "blvm-stratum-v2"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Bitcoin Commons Team"]
 description = "Stratum V2 mining protocol module for blvm-node"
@@ -58,5 +58,3 @@ tokio-test = "0.4"
 
 # Local monorepo: sibling paths override the version pins above.
 # Strip this section in CI/release (BTCDecoded/rust-ci/strip-patch-crates-io@main).
-[patch.crates-io]
-blvm-node = { path = "../blvm-node" }

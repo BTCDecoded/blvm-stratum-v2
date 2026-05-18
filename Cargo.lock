@@ -242,9 +242,9 @@ dependencies = [
 
 [[package]]
 name = "blvm-consensus"
-version = "0.1.17"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd49b6cc5e447474ec7c082ce152e76970b60b3bb5772041d098e92d98259949"
+checksum = "973897b24923f900bf632fcb78614fbb9c6019159c1c79c520bd0e903d6384a8"
 dependencies = [
  "bitcoin_hashes",
  "blvm-primitives",
@@ -279,7 +279,9 @@ dependencies = [
 
 [[package]]
 name = "blvm-node"
-version = "0.1.11"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eed2915c78f28d577a7d40b5d5e047e22229398b1d7d17293d9031d8ca70a14"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -338,9 +340,9 @@ dependencies = [
 
 [[package]]
 name = "blvm-primitives"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b01bb683e49e71e6b67d3f7d59ebb0fbb481f0a6d858e2b171d49be0db7084b"
+checksum = "a3fc17855620b5c96b3c4508ff302e8a768e31e1c6571403f6c6a48692b4661f"
 dependencies = [
  "bitcoin_hashes",
  "ripemd",
@@ -354,9 +356,9 @@ dependencies = [
 
 [[package]]
 name = "blvm-protocol"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87b698249015b7df794aaee9b81fc07ef2a5b2fde7158da0bbb83c9d0138d974"
+checksum = "7cafe9b004448a25996d0ae9f052c81e368ea9085bce77db61b151899019f514"
 dependencies = [
  "anyhow",
  "bech32",
@@ -381,9 +383,9 @@ dependencies = [
 
 [[package]]
 name = "blvm-sdk"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04b6ca0d0e3cf7e096877479bbab0abf33db1b626844336bd98cc41d5de4ff1c"
+checksum = "b3aa520229752baa0a1d05d91e75beabb4faa550e89598298b7359f09ee00de2"
 dependencies = [
  "anyhow",
  "base64 0.21.5",
@@ -408,9 +410,9 @@ dependencies = [
 
 [[package]]
 name = "blvm-sdk-macros"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d1b2b4bdc3e7d0cf7413c15f024da31e92db21ef0030eb626daee8d6d7190f4"
+checksum = "eaaf1f695b4dae6257863e577f30103a58b541b9e7e5a196981158a5c78081f4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -453,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "blvm-stratum-v2"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1894,9 +1896,9 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openssl"
-version = "0.10.79"
+version = "0.10.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0b434746ee2832f4f0baf10137e1cabb18cbe6912c69e2e33263c45250f542"
+checksum = "a45fa2aa886c42762255da344f0a0d313e254066c46aad76f300c3d3da62d967"
 dependencies = [
  "bitflags 2.11.1",
  "cfg-if 1.0.4",
@@ -1925,9 +1927,9 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.115"
+version = "0.9.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "158fe5b292746440aa6e7a7e690e55aeb72d41505e2804c23c6973ad0e9c9781"
+checksum = "f28a22dc7140cda5f096e5e7724a6962ca81a7f8bfd2979f9b18c11af56318c4"
 dependencies = [
  "cc",
  "libc",

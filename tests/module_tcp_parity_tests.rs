@@ -9,8 +9,8 @@ use blvm_protocol::{
 };
 use blvm_stratum_v2::{
     messages::{
-        self, message_types, OpenMiningChannelMessage, SetupConnectionMessage, StratumV2Message,
-        SubmitSharesMessage,
+        self, OpenMiningChannelMessage, SetupConnectionMessage, StratumV2Message,
+        SubmitSharesMessage, message_types,
     },
     protocol::TlvEncoder,
     server::StratumV2Server,

@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
-use blvm_stratum_v2::{server::StratumV2Server, StratumConfig, StratumV2Module};
+use blvm_stratum_v2::{StratumConfig, StratumV2Module, server::StratumV2Server};
 use std::sync::Arc;
 use tracing::{error, warn};
 

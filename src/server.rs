@@ -13,8 +13,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 /// Max TLV frame body (after 4-byte LE length prefix); same cap as the historical in-node listener.

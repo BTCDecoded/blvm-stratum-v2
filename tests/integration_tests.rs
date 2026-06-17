@@ -7,7 +7,6 @@ use blvm_protocol::{
 };
 use blvm_stratum_v2::{
     messages::{self, *},
-    pool::StratumV2Pool,
     protocol::{TlvDecoder, TlvEncoder},
     server::StratumV2Server,
 };

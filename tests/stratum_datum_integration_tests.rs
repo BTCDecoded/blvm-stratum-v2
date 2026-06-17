@@ -16,7 +16,7 @@ use blvm_stratum_v2::{
     template::BlockTemplateGenerator,
 };
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 /// Mock NodeAPI that simulates DATUM + node for Stratum V2 integration tests
 struct MockDatumNodeAPI {
@@ -559,8 +559,7 @@ async fn test_template_generator_queries_datum_for_coinbase() {
     let invocations = node_api.get_call_invocations().await;
     assert!(
         invocations.iter().any(|(m, _)| m == "get_coinbase_payout"),
-        "Expected get_coinbase_payout to be called: {:?}",
-        invocations
+        "Expected get_coinbase_payout to be called: {invocations:?}"
     );
 }
 
@@ -575,8 +574,7 @@ async fn test_template_generator_works_without_datum() {
     let invocations = node_api.get_call_invocations().await;
     assert!(
         invocations.is_empty(),
-        "No call_module expected when DATUM not loaded: {:?}",
-        invocations
+        "No call_module expected when DATUM not loaded: {invocations:?}"
     );
 }
 
@@ -664,39 +662,6 @@ async fn test_submit_shares_calls_datum_submit_pow_on_valid_block() {
         .collect();
     assert!(
         !submit_pow_calls.is_empty(),
-        "Expected submit_pow to be called on valid block: {:?}",
-        invocations
+        "Expected submit_pow to be called on valid block: {invocations:?}"
     );
-}
-
-fn create_test_block() -> Block {
-    Block {
-        header: BlockHeader {
-            version: 1,
-            prev_block_hash: [0u8; 32],
-            merkle_root: [0u8; 32],
-            timestamp: 1700000000,
-            bits: 0x1d00ffff,
-            nonce: 0,
-        },
-        transactions: vec![Transaction {
-            version: 1,
-            inputs: vec![TransactionInput {
-                prevout: OutPoint {
-                    hash: [0u8; 32],
-                    index: 0xFFFFFFFF,
-                },
-                script_sig: vec![0x51, 0x00],
-                sequence: 0xFFFFFFFF,
-            }]
-            .into(),
-            outputs: vec![TransactionOutput {
-                value: 5000000000,
-                script_pubkey: vec![0x51, 0x00],
-            }]
-            .into(),
-            lock_time: 0,
-        }]
-        .into_boxed_slice(),
-    }
 }

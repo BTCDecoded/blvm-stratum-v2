@@ -129,7 +129,7 @@ impl StratumV2Pool {
         let channel_target = self.calculate_channel_target(effective)?;
 
         let miner = self.miners.get_mut(endpoint).ok_or_else(|| {
-            StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint))
+            StratumV2Error::ProtocolError(format!("Miner not registered: {endpoint}"))
         })?;
 
         let channel_info = ChannelInfo {
@@ -197,7 +197,7 @@ impl StratumV2Pool {
         // Extract data and update initial stats in a block to release mutable borrow
         let (job_info, channel_target, endpoint_key) = {
             let miner = self.miners.get_mut(endpoint).ok_or_else(|| {
-                StratumV2Error::ProtocolError(format!("Miner not registered: {}", endpoint))
+                StratumV2Error::ProtocolError(format!("Miner not registered: {endpoint}"))
             })?;
 
             miner.stats.total_shares += 1;

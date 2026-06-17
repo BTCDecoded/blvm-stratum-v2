@@ -1,7 +1,6 @@
 //! Tests for Stratum V2 Pool
 
 use blvm_protocol::{Block, BlockHeader};
-use blvm_stratum_v2::messages::{OpenMiningChannelMessage, SetupConnectionMessage};
 use blvm_stratum_v2::pool::{MinerStats, StratumV2Pool};
 
 fn create_test_block() -> Block {
@@ -20,9 +19,7 @@ fn create_test_block() -> Block {
 
 #[tokio::test]
 async fn test_stratum_v2_pool_new() {
-    let pool = StratumV2Pool::new();
-    // Should create successfully
-    assert!(true);
+    let _pool = StratumV2Pool::new();
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 //! Unit tests for Stratum V2 mining and share validation
 
 use blvm_protocol::{Block, BlockHeader};
-use blvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
+use blvm_stratum_v2::pool::{ShareData, StratumV2Pool};
 
 fn create_test_block() -> Block {
     Block {
@@ -19,9 +19,7 @@ fn create_test_block() -> Block {
 
 #[tokio::test]
 async fn test_stratum_v2_pool_new() {
-    let pool = StratumV2Pool::new();
-    // Should create successfully
-    assert!(true);
+    let _pool = StratumV2Pool::new();
 }
 
 #[tokio::test]

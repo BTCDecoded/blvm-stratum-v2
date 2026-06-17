@@ -4,7 +4,6 @@ mod common;
 
 use blvm_protocol::{Block, BlockHeader};
 use blvm_stratum_v2::{
-    error::StratumV2Error,
     messages::*,
     pool::{ShareData, StratumV2Pool},
     server::StratumV2Server,

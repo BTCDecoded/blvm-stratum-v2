@@ -177,7 +177,7 @@ pub trait StratumV2Message: Serialize + for<'de> Deserialize<'de> {
     /// Serialize message to bytes (binary format per Stratum V2 spec)
     fn to_bytes(&self) -> Result<Vec<u8>, StratumV2Error> {
         bincode::serialize(self)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to serialize: {}", e)))
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to serialize: {e}")))
     }
 
     /// Deserialize message from bytes
@@ -186,7 +186,7 @@ pub trait StratumV2Message: Serialize + for<'de> Deserialize<'de> {
         Self: Sized,
     {
         bincode::deserialize(data)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to deserialize: {}", e)))
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to deserialize: {e}")))
     }
 }
 

@@ -64,7 +64,7 @@ fn create_test_block_with_transactions(tx_count: usize) -> Block {
                     blvm_consensus::opcodes::PUSH_20_BYTES,
                 ]
                 .into_iter()
-                .chain(std::iter::repeat(0x00).take(20))
+                .chain([0u8; 20])
                 .chain([
                     blvm_consensus::opcodes::OP_EQUALVERIFY,
                     blvm_consensus::opcodes::OP_CHECKSIG,
@@ -262,7 +262,7 @@ async fn test_varint_decoding() {
     assert_eq!(bytes_read, 1);
 
     // Test medium value
-    let mut data = vec![0xfd, 0xe8, 0x03];
+    let data = vec![0xfd, 0xe8, 0x03];
     let (value, bytes_read) = server.read_varint(&data);
     assert_eq!(value, 1000);
     assert_eq!(bytes_read, 3);

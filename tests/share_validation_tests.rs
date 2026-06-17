@@ -1,25 +1,8 @@
 //! Unit tests for share validation and PoW checking
 
-use blvm_protocol::{Block, BlockHeader, Hash};
+use blvm_protocol::{BlockHeader, Hash};
 use blvm_stratum_v2::pool::{JobInfo, ShareData, StratumV2Pool};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn create_test_block() -> Block {
-    Block {
-        header: BlockHeader {
-            version: 1,
-            prev_block_hash: [0u8; 32],
-            merkle_root: [0u8; 32],
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            bits: 0x1d00ffff,
-            nonce: 0,
-        },
-        transactions: vec![].into_boxed_slice(),
-    }
-}
 
 #[tokio::test]
 async fn test_validate_share_invalid_job_id() {

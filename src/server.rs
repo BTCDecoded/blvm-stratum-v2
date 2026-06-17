@@ -85,7 +85,7 @@ impl StratumV2Server {
         self.node_api
             .send_peer_transport_payload(endpoint.to_string(), data)
             .await
-            .map_err(|e| StratumV2Error::ServerError(format!("NodeAPI peer transport send: {}", e)))
+            .map_err(|e| StratumV2Error::ServerError(format!("NodeAPI peer transport send: {e}")))
     }
 
     /// Start module-owned Stratum TCP (length-prefixed TLV framing; see module `handle_message`).
@@ -101,7 +101,7 @@ impl StratumV2Server {
         }
 
         let listen_addr: SocketAddr = self.listen_addr.parse().map_err(|e| {
-            StratumV2Error::ConfigError(format!("Invalid stratum_v2.listen_addr: {}", e))
+            StratumV2Error::ConfigError(format!("Invalid stratum_v2.listen_addr: {e}"))
         })?;
 
         let listener = match TcpListener::bind(listen_addr).await {
@@ -119,7 +119,7 @@ impl StratumV2Server {
         };
 
         let local = listener.local_addr().map_err(|e| {
-            StratumV2Error::ConfigError(format!("Stratum module TCP local_addr: {}", e))
+            StratumV2Error::ConfigError(format!("Stratum module TCP local_addr: {e}"))
         })?;
         *self.module_tcp_bound_addr.write().await = Some(local);
 
@@ -250,10 +250,7 @@ impl StratumV2Server {
                             // Notify miners of new block via SetNewPrevHashMessage
                             if let Some(block) =
                                 node_api.get_block(block_hash).await.map_err(|e| {
-                                    StratumV2Error::ServerError(format!(
-                                        "Failed to get block: {}",
-                                        e
-                                    ))
+                                    StratumV2Error::ServerError(format!("Failed to get block: {e}"))
                                 })?
                             {
                                 // Update pool with new block
@@ -287,8 +284,7 @@ impl StratumV2Server {
                                         // Serialize and encode message
                                         let payload = msg.to_bytes().map_err(|e| {
                                             StratumV2Error::ProtocolError(format!(
-                                                "Failed to serialize SetNewPrevHash: {}",
-                                                e
+                                                "Failed to serialize SetNewPrevHash: {e}"
                                             ))
                                         })?;
 
@@ -297,8 +293,7 @@ impl StratumV2Server {
                                             .encode(msg.message_type(), &payload)
                                             .map_err(|e| {
                                                 StratumV2Error::ProtocolError(format!(
-                                                    "Failed to encode SetNewPrevHash: {}",
-                                                    e
+                                                    "Failed to encode SetNewPrevHash: {e}"
                                                 ))
                                             })?;
 
@@ -448,7 +443,7 @@ impl StratumV2Server {
 
             // Serialize message
             let payload = job_msg.to_bytes().map_err(|e| {
-                StratumV2Error::ProtocolError(format!("Failed to serialize job message: {}", e))
+                StratumV2Error::ProtocolError(format!("Failed to serialize job message: {e}"))
             })?;
 
             // Encode with TLV
@@ -456,7 +451,7 @@ impl StratumV2Server {
             let encoded = encoder
                 .encode(job_msg.message_type(), &payload)
                 .map_err(|e| {
-                    StratumV2Error::ProtocolError(format!("Failed to encode job message: {}", e))
+                    StratumV2Error::ProtocolError(format!("Failed to encode job message: {e}"))
                 })?;
 
             debug!(
@@ -728,7 +723,7 @@ impl StratumV2Server {
                         // Return error response
                         let error_msg = crate::messages::SetupConnectionErrorMessage {
                             error_code: 1, // Setup failed
-                            error_message: format!("Setup connection failed: {}", e),
+                            error_message: format!("Setup connection failed: {e}"),
                         };
                         let response_payload = error_msg.to_bytes()?;
                         let mut encoder = crate::protocol::TlvEncoder::new();
@@ -749,7 +744,7 @@ impl StratumV2Server {
                         let error_msg = crate::messages::OpenMiningChannelErrorMessage {
                             request_id: msg.request_id,
                             error_code: 2, // Channel open failed
-                            error_message: format!("Failed to open channel: {}", e),
+                            error_message: format!("Failed to open channel: {e}"),
                         };
                         let response_payload = error_msg.to_bytes()?;
                         let mut encoder = crate::protocol::TlvEncoder::new();
@@ -771,7 +766,7 @@ impl StratumV2Server {
                             channel_id: msg.channel_id,
                             job_id: msg.shares.first().map(|s| s.job_id).unwrap_or(0),
                             error_code: 3, // Share submission failed
-                            error_message: format!("Failed to process shares: {}", e),
+                            error_message: format!("Failed to process shares: {e}"),
                         };
                         let response_payload = error_msg.to_bytes()?;
                         let mut encoder = crate::protocol::TlvEncoder::new();
@@ -781,8 +776,7 @@ impl StratumV2Server {
             }
             _ => {
                 return Err(StratumV2Error::ProtocolError(format!(
-                    "Unknown message type: {}",
-                    tag
+                    "Unknown message type: {tag}"
                 )));
             }
         };
@@ -963,8 +957,7 @@ impl StratumV2Server {
                 Ok(())
             }
             Err(e) => Err(StratumV2Error::ServerError(format!(
-                "Failed to submit block: {}",
-                e
+                "Failed to submit block: {e}"
             ))),
         }
     }
@@ -1019,8 +1012,7 @@ impl StratumV2Server {
             .await
             .map_err(|e| {
                 crate::error::StratumV2Error::ServerError(format!(
-                    "Failed to register ModuleAPI: {}",
-                    e
+                    "Failed to register ModuleAPI: {e}"
                 ))
             })
     }

@@ -150,8 +150,7 @@ impl StratumV2Module {
             let pool = server.get_pool();
             pool.write().await.set_default_difficulty(difficulty);
             Ok::<_, String>(format!(
-                "Default difficulty set to {} for new channels",
-                difficulty
+                "Default difficulty set to {difficulty} for new channels"
             ))
         })
     }

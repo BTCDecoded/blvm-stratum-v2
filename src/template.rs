@@ -40,7 +40,7 @@ impl BlockTemplateGenerator {
             )
             .await
             .map_err(|e| {
-                StratumV2Error::TemplateError(format!("Failed to get block template: {}", e))
+                StratumV2Error::TemplateError(format!("Failed to get block template: {e}"))
             })?;
 
         info!(
@@ -118,6 +118,6 @@ impl BlockTemplateGenerator {
             "Using DATUM coinbase payout: {} bytes from pool",
             script.len()
         );
-        (None, Some(format!("hex:{}", script_hex)))
+        (None, Some(format!("hex:{script_hex}")))
     }
 }

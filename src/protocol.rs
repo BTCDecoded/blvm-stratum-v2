@@ -35,23 +35,23 @@ impl TlvEncoder {
         let tlv_size = 2 + 4 + payload.len() as u32;
         result
             .write_all(&tlv_size.to_le_bytes())
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write length: {}", e)))?;
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write length: {e}")))?;
 
         // Write tag (2 bytes, little-endian)
         result
             .write_all(&tag.to_le_bytes())
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write tag: {}", e)))?;
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write tag: {e}")))?;
 
         // Write payload length (4 bytes, little-endian)
         let payload_len = payload.len() as u32;
         result.write_all(&payload_len.to_le_bytes()).map_err(|e| {
-            StratumV2Error::ProtocolError(format!("Failed to write payload length: {}", e))
+            StratumV2Error::ProtocolError(format!("Failed to write payload length: {e}"))
         })?;
 
         // Write payload
-        result.write_all(payload).map_err(|e| {
-            StratumV2Error::ProtocolError(format!("Failed to write payload: {}", e))
-        })?;
+        result
+            .write_all(payload)
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to write payload: {e}")))?;
 
         Ok(result)
     }
@@ -89,7 +89,7 @@ impl TlvDecoder {
         // Read 4-byte length prefix
         let mut length_bytes = [0u8; 4];
         self.cursor.read_exact(&mut length_bytes).map_err(|e| {
-            StratumV2Error::ProtocolError(format!("Failed to read length prefix: {}", e))
+            StratumV2Error::ProtocolError(format!("Failed to read length prefix: {e}"))
         })?;
         let _total_length = u32::from_le_bytes(length_bytes);
 
@@ -97,13 +97,13 @@ impl TlvDecoder {
         let mut tag_bytes = [0u8; 2];
         self.cursor
             .read_exact(&mut tag_bytes)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read tag: {}", e)))?;
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read tag: {e}")))?;
         let tag = u16::from_le_bytes(tag_bytes);
 
         // Read payload length (4 bytes, little-endian)
         let mut length_bytes = [0u8; 4];
         self.cursor.read_exact(&mut length_bytes).map_err(|e| {
-            StratumV2Error::ProtocolError(format!("Failed to read payload length: {}", e))
+            StratumV2Error::ProtocolError(format!("Failed to read payload length: {e}"))
         })?;
         let payload_len = u32::from_le_bytes(length_bytes) as usize;
 
@@ -111,7 +111,7 @@ impl TlvDecoder {
         let mut payload = vec![0u8; payload_len];
         self.cursor
             .read_exact(&mut payload)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read payload: {}", e)))?;
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read payload: {e}")))?;
 
         Ok((tag, payload))
     }
@@ -132,13 +132,13 @@ impl TlvDecoder {
         let mut tag_bytes = [0u8; 2];
         cursor
             .read_exact(&mut tag_bytes)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read tag: {}", e)))?;
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read tag: {e}")))?;
         let tag = u16::from_le_bytes(tag_bytes);
 
         // Read payload length (4 bytes, little-endian)
         let mut length_bytes = [0u8; 4];
         cursor.read_exact(&mut length_bytes).map_err(|e| {
-            StratumV2Error::ProtocolError(format!("Failed to read payload length: {}", e))
+            StratumV2Error::ProtocolError(format!("Failed to read payload length: {e}"))
         })?;
         let payload_len = u32::from_le_bytes(length_bytes) as usize;
 
@@ -155,7 +155,7 @@ impl TlvDecoder {
         let mut payload = vec![0u8; payload_len];
         cursor
             .read_exact(&mut payload)
-            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read payload: {}", e)))?;
+            .map_err(|e| StratumV2Error::ProtocolError(format!("Failed to read payload: {e}")))?;
 
         Ok((tag, payload))
     }

@@ -33,7 +33,7 @@ async fn test_concurrent_miner_registration() {
         let pool_clone = Arc::clone(&pool);
         let handle = tokio::spawn(async move {
             let mut pool = pool_clone.write().await;
-            pool.register_miner(format!("miner-{}", i));
+            pool.register_miner(format!("miner-{i}"));
         });
         handles.push(handle);
     }
@@ -47,7 +47,7 @@ async fn test_concurrent_miner_registration() {
     let pool = pool.read().await;
     assert_eq!(pool.miners.len(), 10);
     for i in 0..10 {
-        assert!(pool.miners.contains_key(&format!("miner-{}", i)));
+        assert!(pool.miners.contains_key(&format!("miner-{i}")));
     }
 }
 
@@ -159,7 +159,7 @@ async fn test_concurrent_template_updates() {
     let miner = pool.miners.get("test-miner").unwrap();
     let channel = miner.channels.get(&1).unwrap();
     // Should have multiple jobs (up to max_jobs)
-    assert!(channel.jobs.len() > 0);
+    assert!(!channel.jobs.is_empty());
 }
 
 #[tokio::test]
@@ -185,7 +185,7 @@ async fn test_read_write_concurrency() {
 
     let pool_clone = Arc::clone(&pool);
     let writer = tokio::spawn(async move {
-        for i in 0..10 {
+        for _ in 0..10 {
             let mut pool = pool_clone.write().await;
             let block = create_test_block();
             pool.set_template(block);
@@ -211,7 +211,7 @@ async fn test_multiple_miners_concurrent() {
         let pool_clone = Arc::clone(&pool);
         let handle = tokio::spawn(async move {
             let mut pool = pool_clone.write().await;
-            let miner_name = format!("miner-{}", miner_id);
+            let miner_name = format!("miner-{miner_id}");
             pool.register_miner(miner_name.clone());
             pool.open_channel(&miner_name, 1, 1).unwrap();
 
@@ -237,7 +237,7 @@ async fn test_multiple_miners_concurrent() {
     let pool = pool.read().await;
     assert_eq!(pool.miners.len(), 5);
     for miner_id in 0..5 {
-        let miner = pool.miners.get(&format!("miner-{}", miner_id)).unwrap();
+        let miner = pool.miners.get(&format!("miner-{miner_id}")).unwrap();
         assert_eq!(miner.stats.total_shares, 1);
     }
 }

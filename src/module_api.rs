@@ -128,7 +128,7 @@ impl ModuleAPI for StratumV2ModuleAPI {
                     "rejected_shares": rejected_shares
                 }))
             }
-            _ => Err(format!("Unknown method: {}", method)),
+            _ => Err(format!("Unknown method: {method}")),
         };
 
         result

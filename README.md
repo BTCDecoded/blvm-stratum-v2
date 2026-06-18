@@ -67,30 +67,40 @@ The module is part of the blvm-node module system. It is loaded automatically wh
 
 ## Configuration
 
-Configure the module in the node's configuration:
+Pin in node `blvm.toml`:
 
 ```toml
-[modules.blvm-stratum-v2]
-enabled = true
-listen_addr = "0.0.0.0:3333"
+[modules]
+blvm-stratum-v2 = "0.1.*"
 ```
 
-### Configuration Options
+Module `config.toml` (flat keys at `<modules.data_dir>/blvm-stratum-v2/config.toml`):
 
-- `enabled`: Enable or disable the module (default: `false`)
-- `listen_addr`: Address to listen for Stratum V2 connections (default: `0.0.0.0:3333`)
+```toml
+listen_addr = "0.0.0.0:3333"
+difficulty_target = 1
+max_connections = 100
+```
+
+Node overrides: `[modules.blvm-stratum-v2]` with the same keys (`MODULE_CONFIG_*` on spawn). There is **no** module `enabled` key — load via the **`[modules]`** pin or `loadmodule`.
+
+### Configuration options
+
+- `listen_addr` (default: `0.0.0.0:3333`) — miner TCP bind (module-owned)
+- `difficulty_target` (default: `1`) — default channel difficulty
+- `max_connections` (default: `100`)
+- `pool_name`, `extra_extranonce` — optional
 
 ### Node `[stratum_v2]`
 
-The node does **not** bind a dedicated Stratum miner port; **`listen_addr`** there is informational / merge-mining related. Miners connect to **this module’s** `listen_addr`. Optional **P2P Stratum TLV demux** is controlled on the node by **`[stratum_v2].p2p_stratum_demux`** (default `true`). Outbound Stratum-shaped bytes to P2P peers use **`NodeAPI::send_peer_transport_payload`**. See **[`blvm/CONFIGURATION.md`](https://github.com/BTCDecoded/blvm/blob/main/CONFIGURATION.md)** and the **blvm-docs** [Stratum V2 + Merge Mining](https://github.com/BTCDecoded/blvm-docs/blob/main/src/node/mining-stratum-v2.md) page.
+The node does **not** bind miner TCP. **`[stratum_v2]`** in `blvm.toml` controls P2P Stratum TLV demux (`p2p_stratum_demux`, default `true`) and merge-mining-related fields — see **blvm-docs** [Stratum V2 + Merge Mining](https://github.com/BTCDecoded/blvm-docs/blob/main/src/node/mining-stratum-v2.md).
 
 ## Module Manifest
 
-The module manifest (`module.toml`) defines:
+See `module.toml` in this repo and **`registry/modules.json`**.
 
 ```toml
 name = "blvm-stratum-v2"
-version = "0.1"
 description = "Stratum V2 mining protocol module"
 entry_point = "blvm-stratum-v2"
 
@@ -123,19 +133,14 @@ capabilities = [
 
 ### Subscribed Events
 
-The module subscribes to these node events:
-
-- **BlockMined**: Block successfully mined - updates pool and notifies miners
-- **BlockTemplateUpdated**: New block template available - generates and distributes jobs
-- **MiningDifficultyChanged**: Mining difficulty changed - updates pool settings
-- **StratumV2MessageReceived**: Stratum TLV from P2P (or historical paths) — processes protocol messages
+- `BlockMined`, `BlockTemplateUpdated`, `MiningDifficultyChanged`
+- `MiningJobCreated`, `ShareSubmitted` (coordination with other modules)
+- `StratumV2MessageReceived` (P2P Stratum TLV when node feature enabled)
 
 ### Published Events
 
-The module publishes these events:
-
-- **MiningJobCreated**: New mining job created and distributed
-- **ShareSubmitted**: Mining share submitted and validated
+- `StratumClientConnected`, `StratumClientDisconnected`
+- `ShareSubmitted` (valid share accepted)
 
 ## Share Validation
 

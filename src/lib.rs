@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod error;
+pub mod jd;
 pub mod messages;
 pub mod module;
 pub mod module_api;

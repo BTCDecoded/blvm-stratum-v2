@@ -53,41 +53,22 @@ impl ModuleAPI for StratumV2ModuleAPI {
         params: &[u8],
         _caller_module_id: &str,
     ) -> Result<Vec<u8>, ModuleError> {
-        let params_str = std::str::from_utf8(params).unwrap_or("");
+        let _ = params;
         let result: Result<serde_json::Value, String> = match method {
             API_METHOD_REGISTER_MERGE_MINING_CHANNEL => {
-                let req: serde_json::Value =
-                    serde_json::from_str(params_str).map_err(|e| e.to_string())?;
-                let chain_id = req
-                    .get("chain_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| "missing chain_id".to_string())?;
-                let min_difficulty = req
-                    .get("min_difficulty")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1) as u32;
-                // TODO: Call pool.open_channel for merge-mining endpoint
-                Ok(
-                    serde_json::json!({ "ok": true, "chain_id": chain_id, "min_difficulty": min_difficulty }),
+                Err(
+                    "merge-mining channel registration is not implemented on this module"
+                        .to_string(),
                 )
             }
             API_METHOD_GET_MERGE_MINING_TEMPLATE => {
-                let _pool = self.pool.read().await;
-                // TODO: Return current template for merge-mining
-                Ok(serde_json::json!({ "template": null }))
+                Err("merge-mining templates are not implemented on this module".to_string())
             }
             API_METHOD_SUBMIT_MERGE_MINING_SHARE => {
-                let _req: serde_json::Value =
-                    serde_json::from_str(params_str).map_err(|e| e.to_string())?;
-                // TODO: Validate and record share
-                Ok(serde_json::json!({ "ok": true }))
+                Err("merge-mining share submission is not implemented on this module".to_string())
             }
             API_METHOD_GET_BLOCK_MERGE_MINING_REWARDS => {
-                let _req: serde_json::Value =
-                    serde_json::from_str(params_str).unwrap_or(serde_json::json!({}));
-                // Stub: returns empty rewards. Full impl would parse coinbase for aux chain headers
-                // and match shares to determine per-chain rewards.
-                Ok(serde_json::json!({ "rewards": [] }))
+                Err("merge-mining rewards are not implemented on this module".to_string())
             }
             API_METHOD_GET_TEMPLATE => {
                 let pool = self.pool.read().await;

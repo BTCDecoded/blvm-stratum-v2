@@ -1,6 +1,7 @@
 //! Stratum V2 server implementation
 
 use crate::error::StratumV2Error;
+use crate::jd::JobDeclarationState;
 use crate::messages::StratumV2Message;
 use crate::pool::StratumV2Pool;
 use crate::template::BlockTemplateGenerator;
@@ -36,6 +37,7 @@ pub struct StratumV2Server {
     local_miner_tx: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>>,
     /// Actual bound address after module TCP `bind` (set for `127.0.0.1:0` / tests; `None` if bind failed or not started).
     module_tcp_bound_addr: Arc<RwLock<Option<SocketAddr>>>,
+    jd: Arc<RwLock<JobDeclarationState>>,
 }
 
 impl StratumV2Server {
@@ -63,6 +65,7 @@ impl StratumV2Server {
             running: Arc::new(RwLock::new(false)),
             local_miner_tx: Arc::new(RwLock::new(HashMap::new())),
             module_tcp_bound_addr: Arc::new(RwLock::new(None)),
+            jd: Arc::new(RwLock::new(JobDeclarationState::default())),
         }))
     }
 
@@ -164,27 +167,37 @@ impl StratumV2Server {
                         let ep_read = endpoint.clone();
                         let miner_tx_read = miner_tx.clone();
                         tokio::spawn(async move {
-                            let mut hdr = vec![0u8; 4];
+                            let mut hdr = [0u8; 6];
                             loop {
                                 if reader.read_exact(&mut hdr).await.is_err() {
                                     break;
                                 }
-                                let frame_len =
-                                    u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
-                                if !(6..=MAX_STRATUM_FRAME_BODY).contains(&frame_len) {
+                                let (_typ, frame_len) =
+                                    match crate::protocol::parse_sv2_header(&hdr) {
+                                        Ok(parsed) => parsed,
+                                        Err(e) => {
+                                            warn!(
+                                                "Rejected Stratum frame from {}: {}",
+                                                ep_read, e
+                                            );
+                                            break;
+                                        }
+                                    };
+                                if frame_len > MAX_STRATUM_FRAME_BODY {
                                     warn!(
                                         "Invalid Stratum V2 frame length {} from {}",
                                         frame_len, ep_read
                                     );
                                     break;
                                 }
-                                let mut frame = vec![0u8; 4 + frame_len];
-                                frame[0..4].copy_from_slice(&hdr);
-                                if reader.read_exact(&mut frame[4..]).await.is_err() {
+                                let mut frame = vec![0u8; 6 + frame_len];
+                                frame[0..6].copy_from_slice(&hdr);
+                                if frame_len > 0
+                                    && reader.read_exact(&mut frame[6..]).await.is_err()
+                                {
                                     break;
                                 }
-                                let inner = frame[4..].to_vec();
-                                match server_read.handle_message(inner, ep_read.clone()).await {
+                                match server_read.handle_message(frame, ep_read.clone()).await {
                                     Ok(response_data) => {
                                         if miner_tx_read.send(response_data).is_err() {
                                             break;
@@ -334,7 +347,10 @@ impl StratumV2Server {
                             // Generate new block template
                             match self.template_generator.generate_template().await {
                                 Ok(template) => {
+                                    let snap = self.template_generator.last_commons_snapshot();
                                     self.update_block_template(template).await?;
+                                    self.pool.write().await.set_commons_snapshot_id(snap);
+                                    self.overlay_declared_jobs().await;
                                 }
                                 Err(e) => {
                                     warn!("Failed to generate block template: {}", e);
@@ -418,6 +434,7 @@ impl StratumV2Server {
         use crate::protocol::TlvEncoder;
 
         let mut pool = self.pool.write().await;
+        pool.set_banned_miners(self.template_generator.last_commons_banned());
         let (job_id, job_distributions) = pool.set_template(template.clone());
 
         info!(
@@ -471,6 +488,87 @@ impl StratumV2Server {
         }
 
         Ok(())
+    }
+
+    /// Job for one miner from that connection's declaration.
+    async fn update_block_template_for(
+        &self,
+        owner: &str,
+        template: Block,
+    ) -> Result<(), StratumV2Error> {
+        use crate::messages::{NewMiningJobMessage, StratumV2Message};
+        use crate::protocol::TlvEncoder;
+
+        let mut pool = self.pool.write().await;
+        pool.set_banned_miners(self.template_generator.last_commons_banned());
+        let (job_id, job_distributions) = pool.set_template_for(owner, template.clone());
+
+        info!(
+            "Updated declared template: job_id={}, owner={}, channels={}",
+            job_id,
+            owner,
+            job_distributions.len()
+        );
+
+        let (coinbase_prefix, coinbase_suffix, merkle_path) =
+            self.extract_template_parts(&template);
+
+        for (endpoint, channel_id) in job_distributions {
+            let job_msg = NewMiningJobMessage {
+                channel_id,
+                job_id,
+                prev_hash: template.header.prev_block_hash,
+                coinbase_prefix: coinbase_prefix.clone(),
+                coinbase_suffix: coinbase_suffix.clone(),
+                merkle_path: merkle_path.clone(),
+            };
+            let payload = job_msg.to_bytes().map_err(|e| {
+                StratumV2Error::ProtocolError(format!("Failed to serialize job message: {e}"))
+            })?;
+            let mut encoder = TlvEncoder::new();
+            let encoded = encoder
+                .encode(job_msg.message_type(), &payload)
+                .map_err(|e| {
+                    StratumV2Error::ProtocolError(format!("Failed to encode job message: {e}"))
+                })?;
+            if let Err(e) = self.send_to_miner(&endpoint, encoded).await {
+                warn!("Failed to send declared job to miner {}: {}", endpoint, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn apply_owner_declaration(&self, endpoint: &str, ids: Vec<Hash>) {
+        self.template_generator
+            .set_declared_txids(endpoint, Some(ids));
+        match self.template_generator.generate_template_for(endpoint).await {
+            Ok(template) => {
+                let snap = self.template_generator.last_commons_snapshot();
+                if let Err(e) = self.update_block_template_for(endpoint, template).await {
+                    warn!("declared job for {endpoint}: {e}");
+                }
+                self.pool.write().await.set_commons_snapshot_id(snap);
+            }
+            Err(e) => {
+                warn!("declared template for {endpoint}: {e}");
+            }
+        }
+    }
+
+    async fn overlay_declared_jobs(&self) {
+        for owner in self.template_generator.declared_owners() {
+            match self.template_generator.generate_template_for(&owner).await {
+                Ok(template) => {
+                    if let Err(e) = self.update_block_template_for(&owner, template).await {
+                        warn!("JD overlay {owner}: {e}");
+                    }
+                }
+                Err(e) => {
+                    warn!("JD overlay generate {owner}: {e}");
+                }
+            }
+        }
     }
 
     /// Extract template parts for Stratum V2 job message (pub for tests)
@@ -704,10 +802,9 @@ impl StratumV2Server {
         endpoint: String,
     ) -> Result<Vec<u8>, StratumV2Error> {
         use crate::messages::*;
-        use crate::protocol::TlvDecoder;
+        use crate::protocol::decode_incoming;
 
-        // Decode TLV message
-        let (tag, payload) = TlvDecoder::decode_raw(&data)?;
+        let (tag, payload, official) = decode_incoming(&data)?;
 
         // Deserialize message based on tag
         let response_bytes = match tag {
@@ -774,6 +871,24 @@ impl StratumV2Server {
                     }
                 }
             }
+            message_types::ALLOCATE_MINING_JOB_TOKEN => {
+                let msg = AllocateMiningJobTokenMessage::from_bytes(&payload)?;
+                let token = self.jd.write().await.allocate_token(&endpoint);
+                let ok = AllocateMiningJobTokenSuccessMessage {
+                    request_id: msg.request_id,
+                    mining_job_token: token,
+                };
+                let mut encoder = crate::protocol::TlvEncoder::new();
+                encoder.encode(ok.message_type(), &ok.to_bytes()?)?
+            }
+            message_types::DECLARE_MINING_JOB => {
+                let msg = DeclareMiningJobMessage::from_bytes(&payload)?;
+                self.handle_declare_mining_job(msg, &endpoint).await?
+            }
+            message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS => {
+                let msg = ProvideMissingTransactionsSuccessMessage::from_bytes(&payload)?;
+                self.handle_provide_missing_success(msg, &endpoint).await?
+            }
             _ => {
                 return Err(StratumV2Error::ProtocolError(format!(
                     "Unknown message type: {tag}"
@@ -781,6 +896,7 @@ impl StratumV2Server {
             }
         };
 
+        let _ = official;
         Ok(response_bytes)
     }
 
@@ -817,6 +933,158 @@ impl StratumV2Server {
             supported_versions: vec![2], // Stratum V2
             capabilities: vec!["mining".to_string()],
         })
+    }
+
+    /// Official SV2 JD: resolve txids from the node mempool. Unknown → ProvideMissing.
+    /// Accepted declarations are handed to `get_block_template_declared` (sibling node).
+    pub async fn handle_declare_mining_job(
+        &self,
+        msg: crate::messages::DeclareMiningJobMessage,
+        endpoint: &str,
+    ) -> Result<Vec<u8>, StratumV2Error> {
+        use crate::messages::*;
+        {
+            let jd = self.jd.read().await;
+            if !jd.token_ok(&msg.mining_job_token, endpoint) {
+                let err = DeclareMiningJobErrorMessage {
+                    request_id: msg.request_id,
+                    error_code: 1,
+                    error_message: "unknown mining_job_token".into(),
+                };
+                let mut encoder = crate::protocol::TlvEncoder::new();
+                return encoder.encode(err.message_type(), &err.to_bytes()?);
+            }
+        }
+        let mut missing = Vec::new();
+        for (i, txid) in msg.tx_id_list.iter().enumerate() {
+            match self.node_api.get_mempool_transaction(txid).await {
+                Ok(Some(_)) => {}
+                _ => missing.push(i as u16),
+            }
+        }
+        let accepted = {
+            let mut jd = self.jd.write().await;
+            jd.begin_declare(
+                msg.request_id,
+                msg.mining_job_token,
+                endpoint.to_string(),
+                msg.tx_id_list,
+                missing.clone(),
+            );
+            if missing.is_empty() {
+                jd.accept(endpoint, msg.request_id)
+            } else {
+                None
+            }
+        };
+        if let Some(ids) = accepted {
+            self.apply_owner_declaration(endpoint, ids).await;
+        }
+        if missing.is_empty() {
+            let ok = DeclareMiningJobSuccessMessage {
+                request_id: msg.request_id,
+            };
+            let mut encoder = crate::protocol::TlvEncoder::new();
+            encoder.encode(ok.message_type(), &ok.to_bytes()?)
+        } else {
+            let miss = ProvideMissingTransactionsMessage {
+                request_id: msg.request_id,
+                unknown_tx_position_list: missing,
+            };
+            let mut encoder = crate::protocol::TlvEncoder::new();
+            encoder.encode(miss.message_type(), &miss.to_bytes()?)
+        }
+    }
+
+    pub async fn handle_provide_missing_success(
+        &self,
+        msg: crate::messages::ProvideMissingTransactionsSuccessMessage,
+        endpoint: &str,
+    ) -> Result<Vec<u8>, StratumV2Error> {
+        use crate::messages::*;
+        let matches = {
+            let jd = self.jd.read().await;
+            match jd.pending(endpoint, msg.request_id) {
+                Some(p) if p.owner == endpoint => {
+                    JobDeclarationState::provided_matches(p, &msg.transaction_list)
+                }
+                _ => {
+                    let err = DeclareMiningJobErrorMessage {
+                        request_id: msg.request_id,
+                        error_code: 2,
+                        error_message: "no pending declare for this connection".into(),
+                    };
+                    let mut encoder = crate::protocol::TlvEncoder::new();
+                    return encoder.encode(err.message_type(), &err.to_bytes()?);
+                }
+            }
+        };
+        if !matches {
+            let err = DeclareMiningJobErrorMessage {
+                request_id: msg.request_id,
+                error_code: 3,
+                error_message: "provided txs do not match declared txids".into(),
+            };
+            let mut encoder = crate::protocol::TlvEncoder::new();
+            return encoder.encode(err.message_type(), &err.to_bytes()?);
+        }
+        for raw in &msg.transaction_list {
+            let parsed =
+                blvm_protocol::serialization::deserialize_transaction_with_witness(raw);
+            let (tx, witnesses) = match parsed {
+                Ok((tx, witnesses, consumed)) if consumed == raw.len() => (tx, witnesses),
+                _ => {
+                    let err = DeclareMiningJobErrorMessage {
+                        request_id: msg.request_id,
+                        error_code: 3,
+                        error_message: "provided txs do not match declared txids".into(),
+                    };
+                    let mut encoder = crate::protocol::TlvEncoder::new();
+                    return encoder.encode(err.message_type(), &err.to_bytes()?);
+                }
+            };
+            if let Err(e) = self
+                .node_api
+                .submit_mempool_transaction(tx, Some(witnesses))
+                .await
+            {
+                let err = DeclareMiningJobErrorMessage {
+                    request_id: msg.request_id,
+                    error_code: 3,
+                    error_message: format!("provided txs rejected by mempool: {e}"),
+                };
+                let mut encoder = crate::protocol::TlvEncoder::new();
+                return encoder.encode(err.message_type(), &err.to_bytes()?);
+            }
+        }
+        let accepted = {
+            let mut jd = self.jd.write().await;
+            let still = match jd.pending(endpoint, msg.request_id) {
+                Some(p) if p.owner == endpoint => {
+                    JobDeclarationState::provided_matches(p, &msg.transaction_list)
+                }
+                _ => false,
+            };
+            if !still {
+                let err = DeclareMiningJobErrorMessage {
+                    request_id: msg.request_id,
+                    error_code: 2,
+                    error_message: "no pending declare for this connection".into(),
+                };
+                let mut encoder = crate::protocol::TlvEncoder::new();
+                return encoder.encode(err.message_type(), &err.to_bytes()?);
+            }
+            jd.mark_provided(endpoint, msg.request_id);
+            jd.accept(endpoint, msg.request_id)
+        };
+        if let Some(ids) = accepted {
+            self.apply_owner_declaration(endpoint, ids).await;
+        }
+        let ok = DeclareMiningJobSuccessMessage {
+            request_id: msg.request_id,
+        };
+        let mut encoder = crate::protocol::TlvEncoder::new();
+        encoder.encode(ok.message_type(), &ok.to_bytes()?)
     }
 
     /// Handle Open Mining Channel message (pub for tests)
@@ -861,7 +1129,7 @@ impl StratumV2Server {
             let (is_valid_share, is_valid_block) =
                 pool.handle_share(endpoint, share_data.clone())?;
 
-            if is_valid_share {
+            if is_valid_share && !pool.endpoint_is_banned(endpoint) {
                 if let Some(share_hash) = pool.get_share_hash(endpoint, &share_data) {
                     let payload = EventPayload::ShareSubmitted {
                         job_id: share_data.job_id.to_string(),
@@ -875,21 +1143,38 @@ impl StratumV2Server {
                     {
                         debug!("Failed to publish ShareSubmitted: {}", e);
                     }
+                    let snap = pool.commons_snapshot_id().map(|s| s.to_string());
+                    let height = self.node_api.get_block_height().await.unwrap_or(0);
+                    if let Err(e) = self
+                        .template_generator
+                        .submit_commons_share(endpoint, &share_hash, snap.as_deref(), height)
+                        .await
+                    {
+                        warn!("commons_submit_share: {e}");
+                    }
                 }
             }
 
             if is_valid_block {
                 // Submit block to node and optionally to DATUM pool
-                if let Some(template) = pool.current_template() {
+                if let Some(template) = pool.template_for(endpoint) {
                     let block = self.reconstruct_block_from_share(template, &share_data);
                     if let Err(e) = self.submit_block_from_share(template, &share_data).await {
                         warn!("Failed to submit block: {}", e);
                     } else {
+                        let snap = pool.commons_snapshot_id().map(|s| s.to_string());
+                        if let Err(e) = self
+                            .template_generator
+                            .credit_commons_find(&block, snap.as_deref(), Some(endpoint))
+                            .await
+                        {
+                            warn!("commons_credit_find: {e}");
+                        }
                         // When DATUM is loaded (pool mode), submit to pool
                         let block_bytes = bincode::serialize(&block).unwrap_or_default();
                         if let Err(e) = self
                             .node_api
-                            .call_module(None, "submit_pow", block_bytes)
+                            .call_module(Some("datum"), "submit_pow", block_bytes)
                             .await
                         {
                             debug!(

@@ -19,11 +19,11 @@ name = "blvm_stratum_v2"
 path = "src/lib.rs"
 
 [dependencies]
-blvm-node = { version = ">=0.1, <1", features = ["sled"] }
-blvm-sdk = { version = ">=0.1, <1", default-features = false, features = ["node"] }
-blvm-sdk-macros = { version = ">=0.1, <1" }
-blvm-protocol = { version = ">=0.1, <1" }
-blvm-consensus = { version = ">=0.1, <1" }
+blvm-node = { path = "../blvm-node", version = ">=0.1, <1", features = ["sled"] }
+blvm-sdk = { path = "../blvm-sdk", version = ">=0.1, <1", default-features = false, features = ["node"] }
+blvm-sdk-macros = { path = "../blvm-sdk/crates/blvm-sdk-macros", version = ">=0.1, <1" }
+blvm-protocol = { path = "../blvm-protocol", version = ">=0.1, <1" }
+blvm-consensus = { path = "../blvm-consensus", version = ">=0.1, <1" }
 
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }
@@ -58,3 +58,12 @@ tokio-test = "0.4"
 
 # Local monorepo: sibling paths override the version pins above.
 # Strip this section in CI/release (BTCDecoded/rust-ci/strip-patch-crates-io@main).
+[patch.crates-io]
+blvm-node = { path = "../blvm-node" }
+blvm-sdk = { path = "../blvm-sdk" }
+blvm-protocol = { path = "../blvm-protocol" }
+blvm-consensus = { path = "../blvm-consensus" }
+blvm-primitives = { path = "../blvm-primitives" }
+blvm-spec-lock = { path = "../blvm-spec-lock" }
+blvm-muhash = { path = "../blvm-muhash" }
+blvm-secp256k1 = { path = "../blvm-secp256k1" }

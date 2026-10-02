@@ -24,8 +24,14 @@ struct MockDatumNodeAPI {
     call_module_invocations: Arc<RwLock<Vec<(String, usize)>>>,
     /// DATUM get_coinbase_payout response (when Some, call_module returns it)
     datum_payout_response: Option<Vec<u8>>,
+    /// Commons Pool commons_get_coinbase_outputs response.
+    commons_payout_response: Option<Vec<u8>>,
     /// Block template to return from get_block_template
     block_template: blvm_protocol::mining::BlockTemplate,
+    /// Last `commons_credit_find` JSON body.
+    last_credit_params: Arc<RwLock<Option<Vec<u8>>>>,
+    /// Last `commons_submit_share` JSON body.
+    last_submit_share_params: Arc<RwLock<Option<Vec<u8>>>>,
 }
 
 impl MockDatumNodeAPI {
@@ -38,7 +44,10 @@ impl MockDatumNodeAPI {
         Self {
             call_module_invocations: Arc::new(RwLock::new(Vec::new())),
             datum_payout_response: Some(serde_json::to_vec(&payout_json).unwrap()),
+            commons_payout_response: None,
             block_template: create_test_block_template(),
+            last_credit_params: Arc::new(RwLock::new(None)),
+            last_submit_share_params: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -46,12 +55,143 @@ impl MockDatumNodeAPI {
         Self {
             call_module_invocations: Arc::new(RwLock::new(Vec::new())),
             datum_payout_response: None,
+            commons_payout_response: None,
             block_template: create_test_block_template(),
+            last_credit_params: Arc::new(RwLock::new(None)),
+            last_submit_share_params: Arc::new(RwLock::new(None)),
         }
+    }
+
+    fn new_with_commons_payouts() -> Self {
+        let fee = "00".repeat(32);
+        let miner = "11".repeat(32);
+        let payout_json = serde_json::json!({
+            "outputs": [
+                {"script": format!("0020{fee}"), "value_sats": 50_000_000},
+                {"script": format!("0020{miner}"), "value_sats": 4_950_000_000u64},
+            ],
+            "issue_work": true,
+            "snapshot_id": "aa".repeat(32),
+        });
+        Self {
+            call_module_invocations: Arc::new(RwLock::new(Vec::new())),
+            datum_payout_response: None,
+            commons_payout_response: Some(serde_json::to_vec(&payout_json).unwrap()),
+            block_template: create_test_block_template(),
+            last_credit_params: Arc::new(RwLock::new(None)),
+            last_submit_share_params: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Node coinbase already has a BIP141 commitment the splice must keep.
+    fn new_with_commons_and_node_commitment() -> Self {
+        let mut s = Self::new_with_commons_payouts();
+        let mut script = vec![0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
+        script.extend_from_slice(&[0xab; 32]);
+        let mut cb = s.block_template.coinbase_tx.clone();
+        let mut outs = cb.outputs.to_vec();
+        outs.push(TransactionOutput {
+            value: 0,
+            script_pubkey: script,
+        });
+        cb.outputs = outs.into();
+        s.block_template.coinbase_tx = cb;
+        s
+    }
+
+    /// Commons pays less than the template coinbase; splice must top up first.
+    fn new_with_commons_shortfall() -> Self {
+        let fee = "00".repeat(32);
+        let miner = "11".repeat(32);
+        let payout_json = serde_json::json!({
+            "outputs": [
+                {"script": format!("0020{fee}"), "value_sats": 40_000_000},
+                {"script": format!("0020{miner}"), "value_sats": 4_950_000_000u64},
+            ],
+            "issue_work": true,
+            "snapshot_id": "aa".repeat(32),
+        });
+        Self {
+            call_module_invocations: Arc::new(RwLock::new(Vec::new())),
+            datum_payout_response: None,
+            commons_payout_response: Some(serde_json::to_vec(&payout_json).unwrap()),
+            block_template: create_test_block_template(),
+            last_credit_params: Arc::new(RwLock::new(None)),
+            last_submit_share_params: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Commons pays more than subsidy+fees on the template; splice must refuse.
+    fn new_with_commons_overpay() -> Self {
+        let fee = "00".repeat(32);
+        let miner = "11".repeat(32);
+        let payout_json = serde_json::json!({
+            "outputs": [
+                {"script": format!("0020{fee}"), "value_sats": 100_000_000},
+                {"script": format!("0020{miner}"), "value_sats": 4_950_000_000u64},
+            ],
+            "issue_work": true,
+        });
+        Self {
+            call_module_invocations: Arc::new(RwLock::new(Vec::new())),
+            datum_payout_response: None,
+            commons_payout_response: Some(serde_json::to_vec(&payout_json).unwrap()),
+            block_template: create_test_block_template(),
+            last_credit_params: Arc::new(RwLock::new(None)),
+            last_submit_share_params: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// NodeAPI already embedded Commons (pass 28+). Splice must not rewrite.
+    fn new_with_commons_already_in_node_template() -> Self {
+        let mut s = Self::new_with_commons_payouts();
+        let mut fee_script = vec![0x00, 0x20];
+        fee_script.extend(std::iter::repeat_n(0u8, 32));
+        let mut miner_script = vec![0x00, 0x20];
+        miner_script.extend(std::iter::repeat_n(0x11u8, 32));
+        let mut commit = vec![0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
+        commit.extend_from_slice(&[0xcd; 32]);
+        s.block_template.coinbase_tx.outputs = vec![
+            TransactionOutput {
+                value: 50_000_000,
+                script_pubkey: fee_script,
+            },
+            TransactionOutput {
+                value: 4_950_000_000,
+                script_pubkey: miner_script,
+            },
+            TransactionOutput {
+                value: 0,
+                script_pubkey: commit,
+            },
+        ]
+        .into();
+        s.block_template.header.merkle_root = [0xee; 32];
+        s
+    }
+
+    fn new_with_commons_holding() -> Self {
+        let mut s = Self::new_with_commons_payouts();
+        let payout_json = serde_json::json!({
+            "outputs": [
+                {"script": format!("0020{}", "00".repeat(32)), "value_sats": 50_000_000},
+            ],
+            "issue_work": false,
+        });
+        s.commons_payout_response = Some(serde_json::to_vec(&payout_json).unwrap());
+        s
     }
 
     async fn get_call_invocations(&self) -> Vec<(String, usize)> {
         self.call_module_invocations.read().await.clone()
+    }
+
+    async fn last_credit_params(&self) -> Option<Vec<u8>> {
+        self.last_credit_params.read().await.clone()
+    }
+
+    async fn last_submit_share_params(&self) -> Option<Vec<u8>> {
+        self.last_submit_share_params.read().await.clone()
     }
 }
 
@@ -355,7 +495,11 @@ impl NodeAPI for MockDatumNodeAPI {
         &self,
         id: &str,
     ) -> Result<bool, blvm_node::module::traits::ModuleError> {
-        Ok(id == "datum" && self.datum_payout_response.is_some())
+        Ok(match id {
+            "datum" => self.datum_payout_response.is_some(),
+            "blvm-commons-pool" => self.commons_payout_response.is_some(),
+            _ => false,
+        })
     }
     async fn publish_event(
         &self,
@@ -379,8 +523,25 @@ impl NodeAPI for MockDatumNodeAPI {
                 return Ok(resp.clone());
             }
         }
+        if method == "commons_get_coinbase_outputs" {
+            if let Some(ref resp) = self.commons_payout_response {
+                return Ok(resp.clone());
+            }
+        }
         if method == "submit_pow" {
             return Ok(serde_json::to_vec(&serde_json::json!({ "accepted": true })).unwrap());
+        }
+        if method == "commons_submit_share" {
+            *self.last_submit_share_params.write().await = Some(params.clone());
+            return Ok(serde_json::to_vec(&serde_json::json!({ "ok": true })).unwrap());
+        }
+        if method == "commons_credit_find" {
+            *self.last_credit_params.write().await = Some(params.clone());
+            return Ok(serde_json::to_vec(&serde_json::json!({
+                "credited": true,
+                "outcome": "Credited",
+            }))
+            .unwrap());
         }
         Ok(Vec::new())
     }
@@ -452,6 +613,13 @@ impl NodeAPI for MockDatumNodeAPI {
     ) -> Result<blvm_node::module::traits::SubmitBlockResult, blvm_node::module::traits::ModuleError>
     {
         Ok(blvm_node::module::traits::SubmitBlockResult::Accepted)
+    }
+    async fn submit_mempool_transaction(
+        &self,
+        _: blvm_protocol::Transaction,
+        _: Option<Vec<blvm_protocol::Witness>>,
+    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
+        Ok(true)
     }
     async fn register_core_rpc_override(
         &self,
@@ -579,6 +747,143 @@ async fn test_template_generator_works_without_datum() {
 }
 
 #[tokio::test]
+async fn test_template_embeds_commons_multi_output() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_payouts());
+    let generator = BlockTemplateGenerator::new(node_api.clone());
+    let block = generator.generate_template().await.unwrap();
+    assert_eq!(block.transactions[0].outputs.len(), 3);
+    assert_eq!(block.transactions[0].outputs[0].value, 50_000_000);
+    assert_eq!(block.transactions[0].outputs[1].value, 4_950_000_000);
+    assert_eq!(block.transactions[0].outputs[2].value, 0);
+    assert_eq!(block.transactions[0].outputs[2].script_pubkey[0], 0x6a);
+    let merkle = blvm_protocol::mining::calculate_merkle_root(&block.transactions).unwrap();
+    assert_eq!(block.header.merkle_root, merkle);
+    let invocations = node_api.get_call_invocations().await;
+    assert!(
+        invocations
+            .iter()
+            .any(|(m, _)| m == "commons_get_coinbase_outputs"),
+        "{invocations:?}"
+    );
+    let snap = generator.last_commons_snapshot();
+    let expected = "aa".repeat(32);
+    assert_eq!(snap.as_deref(), Some(expected.as_str()));
+    generator
+        .credit_commons_find(&block, snap.as_deref(), Some("miner.example:3333"))
+        .await
+        .unwrap();
+    let after = node_api.get_call_invocations().await;
+    assert!(
+        after.iter().any(|(m, _)| m == "commons_credit_find"),
+        "{after:?}"
+    );
+    let credit = node_api.last_credit_params().await.expect("credit body");
+    let v: serde_json::Value = serde_json::from_slice(&credit).unwrap();
+    let hash = v
+        .get("block_hash")
+        .and_then(|x| x.as_str())
+        .expect("block_hash");
+    assert_eq!(hash.len(), 64);
+    let expected = blvm_stratum_v2::pool::stratum_header_hash(&block.header);
+    let expected_hex: String = expected.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(hash, expected_hex);
+    let miner = v.get("miner").and_then(|x| x.as_str()).expect("miner");
+    assert_eq!(miner.len(), 64);
+}
+
+#[tokio::test]
+async fn test_template_submits_commons_share() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_payouts());
+    let generator = BlockTemplateGenerator::new(node_api.clone());
+    let snap = "aa".repeat(32);
+    generator
+        .submit_commons_share("miner-1", &[0xab; 32], Some(snap.as_str()), 100)
+        .await
+        .unwrap();
+    let after = node_api.get_call_invocations().await;
+    assert!(
+        after.iter().any(|(m, _)| m == "commons_submit_share"),
+        "{after:?}"
+    );
+    let body = node_api
+        .last_submit_share_params()
+        .await
+        .expect("submit body");
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        v.get("share_hash").and_then(|x| x.as_str()).unwrap(),
+        "ab".repeat(32)
+    );
+    assert_eq!(
+        v.get("snapshot_id").and_then(|x| x.as_str()).unwrap(),
+        snap
+    );
+    assert_eq!(v.get("bound_height").and_then(|x| x.as_u64()).unwrap(), 100);
+    let miner = v.get("miner").and_then(|x| x.as_str()).unwrap();
+    assert_eq!(miner.len(), 64);
+}
+
+#[tokio::test]
+async fn test_template_refuses_when_commons_holding() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_holding());
+    let generator = BlockTemplateGenerator::new(node_api);
+    let err = generator.generate_template().await.unwrap_err();
+    assert!(
+        err.to_string().contains("holding"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn test_template_skips_splice_when_node_already_paid_commons() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_already_in_node_template());
+    let generator = BlockTemplateGenerator::new(node_api);
+    let block = generator.generate_template().await.unwrap();
+    assert_eq!(block.transactions[0].outputs.len(), 3);
+    assert_eq!(block.transactions[0].outputs[0].value, 50_000_000);
+    assert_eq!(block.transactions[0].outputs[1].value, 4_950_000_000);
+    assert_eq!(&block.transactions[0].outputs[2].script_pubkey[6..], &[0xcd; 32]);
+    assert_eq!(
+        block.header.merkle_root, [0xee; 32],
+        "splice must not rewrite a node-built Commons coinbase"
+    );
+}
+
+#[tokio::test]
+async fn test_template_keeps_node_bip141_commitment() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_and_node_commitment());
+    let generator = BlockTemplateGenerator::new(node_api);
+    let block = generator.generate_template().await.unwrap();
+    assert_eq!(block.transactions[0].outputs.len(), 3);
+    let last = &block.transactions[0].outputs[2];
+    assert_eq!(last.value, 0);
+    assert_eq!(&last.script_pubkey[6..], &[0xab; 32]);
+}
+
+#[tokio::test]
+async fn test_template_tops_up_commons_shortfall_to_coinbase_budget() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_shortfall());
+    let generator = BlockTemplateGenerator::new(node_api);
+    let block = generator.generate_template().await.unwrap();
+    assert_eq!(block.transactions[0].outputs.len(), 3);
+    assert_eq!(block.transactions[0].outputs[0].value, 50_000_000);
+    assert_eq!(block.transactions[0].outputs[1].value, 4_950_000_000);
+    assert_eq!(block.transactions[0].outputs[2].value, 0);
+}
+
+#[tokio::test]
+async fn test_template_refuses_commons_over_coinbase_budget() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_overpay());
+    let generator = BlockTemplateGenerator::new(node_api);
+    let err = generator.generate_template().await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("exceed coinbase budget"),
+        "{msg}"
+    );
+}
+
+#[tokio::test]
 async fn test_pool_accepts_mined_block_share() {
     use blvm_protocol::genesis;
 
@@ -647,7 +952,7 @@ async fn test_submit_shares_calls_datum_submit_pow_on_valid_block() {
     let mut encoder = TlvEncoder::new();
     let encoded = encoder.encode(msg.message_type(), &msg_bytes).unwrap();
     let msg_result = server
-        .handle_message(encoded[4..].to_vec(), "miner-1".to_string())
+        .handle_message(encoded, "miner-1".to_string())
         .await;
     assert!(
         msg_result.is_ok(),
@@ -664,4 +969,125 @@ async fn test_submit_shares_calls_datum_submit_pow_on_valid_block() {
         !submit_pow_calls.is_empty(),
         "Expected submit_pow to be called on valid block: {invocations:?}"
     );
+}
+
+#[tokio::test]
+async fn test_submit_shares_calls_commons_submit_share() {
+    use blvm_protocol::genesis;
+
+    let ctx = blvm_node::module::traits::ModuleContext {
+        module_id: "test".to_string(),
+        config: std::collections::HashMap::new(),
+        data_dir: "test".to_string(),
+        socket_path: "test".to_string(),
+    };
+
+    let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_payouts());
+    let server = StratumV2Server::new(&ctx, node_api.clone()).await.unwrap();
+
+    let block = genesis::mainnet_genesis();
+    let snap = "aa".repeat(32);
+
+    let pool_handle = server.get_pool();
+    let mut pool = pool_handle.write().await;
+    pool.register_miner("miner-1".to_string());
+    pool.open_channel("miner-1", 1, 0).unwrap();
+    let pool_template = pool.set_template(block.clone());
+    pool.set_commons_snapshot_id(Some(snap.clone()));
+    drop(pool);
+
+    let share_data = messages::ShareData {
+        channel_id: 1,
+        job_id: pool_template.0,
+        nonce: block.header.nonce as u32,
+        version: block.header.version as i64,
+        merkle_root: block.header.merkle_root,
+    };
+
+    let msg = SubmitSharesMessage {
+        channel_id: 1,
+        shares: vec![share_data],
+    };
+
+    let msg_bytes = msg.to_bytes().unwrap();
+    let mut encoder = TlvEncoder::new();
+    let encoded = encoder.encode(msg.message_type(), &msg_bytes).unwrap();
+    let msg_result = server
+        .handle_message(encoded, "miner-1".to_string())
+        .await;
+    assert!(
+        msg_result.is_ok(),
+        "handle_message failed: {:?}",
+        msg_result.err()
+    );
+
+    let invocations = node_api.get_call_invocations().await;
+    assert!(
+        invocations.iter().any(|(m, _)| m == "commons_submit_share"),
+        "{invocations:?}"
+    );
+    let body = node_api
+        .last_submit_share_params()
+        .await
+        .expect("submit body");
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        v.get("snapshot_id").and_then(|x| x.as_str()).unwrap(),
+        snap
+    );
+    assert_eq!(v.get("bound_height").and_then(|x| x.as_u64()).unwrap(), 100);
+    assert_eq!(
+        v.get("miner").and_then(|x| x.as_str()).unwrap().len(),
+        64
+    );
+}
+
+#[test]
+fn module_toml_declares_stage3a_permissions() {
+    let toml = include_str!("../module.toml");
+    for cap in [
+        "read_blockchain",
+        "read_chain_state",
+        "subscribe_events",
+        "submit_block",
+        "send_transactions",
+        "call_module",
+        "discover_modules",
+        "publish_events",
+    ] {
+        assert!(toml.contains(cap), "missing capability {cap}");
+    }
+}
+
+#[tokio::test]
+async fn generate_template_does_not_use_another_miners_declaration() {
+    let node_api = Arc::new(MockDatumNodeAPI::new_without_datum());
+    let generator = BlockTemplateGenerator::new(node_api);
+    generator.set_declared_txids("alice", Some(vec![[0xab; 32]]));
+    assert_eq!(
+        generator.declared_for(Some("alice")),
+        Some(vec![[0xab; 32]])
+    );
+    assert_eq!(generator.declared_for(Some("bob")), None);
+    assert_eq!(generator.declared_for(None), None);
+
+    generator
+        .generate_template()
+        .await
+        .expect("tip broadcast must not take Alice's JD path");
+    generator
+        .generate_template_for("bob")
+        .await
+        .expect("Bob has no declaration");
+    let err = generator.generate_template_for("alice").await.unwrap_err();
+    assert!(
+        err.to_string().contains("declared template refused"),
+        "{err}"
+    );
+
+    generator.set_declared_txids("alice", None);
+    generator
+        .generate_template_for("alice")
+        .await
+        .expect("cleared JD returns to node-selected");
 }

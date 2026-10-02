@@ -106,7 +106,12 @@ entry_point = "blvm-stratum-v2"
 
 capabilities = [
     "read_blockchain",
+    "read_chain_state",
     "subscribe_events",
+    "submit_block",
+    "call_module",
+    "discover_modules",
+    "publish_events",
 ]
 ```
 

@@ -70,10 +70,89 @@ async fn test_stratum_v2_pool_set_template() {
 }
 
 #[tokio::test]
+async fn test_set_template_for_does_not_pin_other_miners() {
+    let mut pool = StratumV2Pool::new();
+    pool.register_miner("alice".to_string());
+    pool.register_miner("bob".to_string());
+    pool.open_channel("alice", 1, 1).unwrap();
+    pool.open_channel("bob", 2, 1).unwrap();
+
+    let mut alice_block = create_test_block();
+    alice_block.header.merkle_root = [0xaa; 32];
+    let (job_id, dist) = pool.set_template_for("alice", alice_block);
+    assert_eq!(dist, vec![("alice".to_string(), 1)]);
+    assert_eq!(
+        pool.miners["alice"].channels[&1].current_job_id,
+        Some(job_id)
+    );
+    assert!(pool.miners["bob"].channels[&2].current_job_id.is_none());
+    assert!(pool.template_for("alice").is_some());
+    assert!(pool.template_for("bob").is_none());
+}
+
+#[tokio::test]
+async fn test_set_template_clears_per_miner_declared_job() {
+    let mut pool = StratumV2Pool::new();
+    pool.register_miner("alice".to_string());
+    pool.register_miner("bob".to_string());
+    pool.open_channel("alice", 1, 1).unwrap();
+    pool.open_channel("bob", 2, 1).unwrap();
+
+    let mut alice_block = create_test_block();
+    alice_block.header.merkle_root = [0xaa; 32];
+    pool.set_template_for("alice", alice_block);
+    assert_eq!(
+        pool.template_for("alice").unwrap().header.merkle_root,
+        [0xaa; 32]
+    );
+
+    let broadcast = create_test_block();
+    let (job_id, dist) = pool.set_template(broadcast);
+    assert_eq!(dist.len(), 2);
+    assert_eq!(
+        pool.template_for("alice").unwrap().header.merkle_root,
+        [0u8; 32]
+    );
+    assert_eq!(
+        pool.template_for("bob").unwrap().header.merkle_root,
+        [0u8; 32]
+    );
+    assert_eq!(
+        pool.miners["alice"].channels[&1].current_job_id,
+        Some(job_id)
+    );
+    assert_eq!(pool.miners["bob"].channels[&2].current_job_id, Some(job_id));
+}
+
+#[tokio::test]
 async fn test_miner_stats_default() {
     let stats = MinerStats::default();
     assert_eq!(stats.total_shares, 0);
     assert_eq!(stats.accepted_shares, 0);
     assert_eq!(stats.rejected_shares, 0);
     assert!(stats.last_share_time.is_none());
+}
+
+#[tokio::test]
+async fn test_set_template_skips_banned_miner() {
+    let mut pool = StratumV2Pool::new();
+    pool.register_miner("honest".to_string());
+    pool.register_miner("rogue".to_string());
+    pool.open_channel("honest", 1, 1).unwrap();
+    pool.open_channel("rogue", 2, 1).unwrap();
+    pool.set_banned_miners([StratumV2Pool::commons_miner_id("rogue")]);
+
+    let (job_id, dist) = pool.set_template(create_test_block());
+    assert_eq!(dist.len(), 1);
+    assert_eq!(dist[0].0, "honest");
+    assert_eq!(
+        pool.miners["honest"].channels[&1].current_job_id,
+        Some(job_id)
+    );
+    assert_eq!(pool.miners["rogue"].channels[&2].current_job_id, None);
+
+    let (_, dist) = pool.set_template_for("rogue", create_test_block());
+    assert!(dist.is_empty());
+    assert!(pool.endpoint_is_banned("rogue"));
+    assert!(!pool.endpoint_is_banned("honest"));
 }

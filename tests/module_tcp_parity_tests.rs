@@ -1,6 +1,5 @@
-//! Module-owned TCP framing: 4-byte LE body length, then
-//! body bytes passed to `handle_message` (TLV). Response is written as returned by `handle_message`
-//! (full wire including its own 4-byte prefix).
+//! Module-owned TCP framing: official 6-byte SV2 header, then payload.
+//! Responses are bare frames. A 4-byte little-endian length prefix is rejected.
 
 mod common;
 
@@ -12,7 +11,7 @@ use blvm_stratum_v2::{
         self, OpenMiningChannelMessage, SetupConnectionMessage, StratumV2Message,
         SubmitSharesMessage, message_types,
     },
-    protocol::TlvEncoder,
+    protocol::{parse_sv2_header, TlvEncoder},
     server::StratumV2Server,
 };
 use common::SubmittingMockNodeAPI;
@@ -39,15 +38,15 @@ fn encode_tlv(tag: u16, msg: &impl StratumV2Message) -> Vec<u8> {
 }
 
 async fn read_framed_response(stream: &mut TcpStream) -> Vec<u8> {
-    let mut len_prefix = [0u8; 4];
-    stream.read_exact(&mut len_prefix).await.unwrap();
-    let tlv_len = u32::from_le_bytes(len_prefix) as usize;
-    let mut tlv_and_rest = vec![0u8; tlv_len];
-    stream.read_exact(&mut tlv_and_rest).await.unwrap();
-    let mut full = Vec::with_capacity(4 + tlv_len);
-    full.extend_from_slice(&len_prefix);
-    full.extend_from_slice(&tlv_and_rest);
-    full
+    let mut hdr = [0u8; 6];
+    stream.read_exact(&mut hdr).await.unwrap();
+    let (_typ, len) = parse_sv2_header(&hdr).unwrap();
+    let mut frame = vec![0u8; 6 + len];
+    frame[..6].copy_from_slice(&hdr);
+    if len > 0 {
+        stream.read_exact(&mut frame[6..]).await.unwrap();
+    }
+    frame
 }
 
 fn create_test_block() -> Block {
@@ -108,12 +107,13 @@ async fn module_tcp_setup_roundtrip_matches_handle_message_bytes() {
     };
     let request_wire = encode_tlv(message_types::SETUP_CONNECTION, &setup);
 
-    let inner = request_wire[4..].to_vec();
-
     let mut stream = TcpStream::connect(bind).await.unwrap();
     let endpoint = stream.local_addr().unwrap().to_string();
 
-    let expected_response = server.handle_message(inner, endpoint).await.unwrap();
+    let expected_response = server
+        .handle_message(request_wire.clone(), endpoint)
+        .await
+        .unwrap();
 
     stream.write_all(&request_wire).await.unwrap();
 
@@ -144,9 +144,8 @@ async fn module_tcp_setup_then_open_channel_matches_sequential_handle_message() 
         capabilities: vec!["mining".to_string()],
     };
     let setup_wire = encode_tlv(message_types::SETUP_CONNECTION, &setup);
-    let setup_inner = setup_wire[4..].to_vec();
     let exp_setup = server
-        .handle_message(setup_inner, endpoint.clone())
+        .handle_message(setup_wire.clone(), endpoint.clone())
         .await
         .unwrap();
 
@@ -160,9 +159,8 @@ async fn module_tcp_setup_then_open_channel_matches_sequential_handle_message() 
         min_difficulty: 1,
     };
     let open_wire = encode_tlv(message_types::OPEN_MINING_CHANNEL, &open);
-    let open_inner = open_wire[4..].to_vec();
     let exp_open = server
-        .handle_message(open_inner, endpoint.clone())
+        .handle_message(open_wire.clone(), endpoint.clone())
         .await
         .unwrap();
 
@@ -215,13 +213,42 @@ async fn module_tcp_submit_shares_matches_handle_message_after_job_ready() {
         }],
     };
     let submit_wire = encode_tlv(message_types::SUBMIT_SHARES, &submit);
-    let submit_inner = submit_wire[4..].to_vec();
     let exp = server
-        .handle_message(submit_inner, endpoint.clone())
+        .handle_message(submit_wire.clone(), endpoint.clone())
         .await
         .unwrap();
 
     stream.write_all(&submit_wire).await.unwrap();
     let got = read_framed_response(&mut stream).await;
     assert_eq!(got, exp);
+}
+
+/// Header-only official frame is a complete read. A 4-byte LE length prefix is not.
+#[tokio::test]
+async fn module_tcp_header_only_accepted_legacy_prefix_rejected() {
+    use blvm_stratum_v2::protocol::{encode_sv2_frame, take_sv2_frame};
+
+    let header_only = encode_sv2_frame(0x01, b"");
+    let (frame, n) = take_sv2_frame(&header_only).unwrap();
+    assert_eq!(n, 6);
+    assert_eq!(frame.len(), 6);
+
+    let ctx = test_ctx_listen_random_port();
+    let node_api = Arc::new(SubmittingMockNodeAPI::default());
+    let server = StratumV2Server::new(&ctx, node_api).await.unwrap();
+    server.start().await.unwrap();
+    let bind = server.module_tcp_local_addr().await.unwrap();
+
+    let mut ok_stream = TcpStream::connect(bind).await.unwrap();
+    ok_stream.write_all(&header_only).await.unwrap();
+    let mut buf = [0u8; 1];
+    let nread = ok_stream.read(&mut buf).await.unwrap();
+    assert_eq!(nread, 0, "header-only frame is consumed; empty payload is not a setup");
+
+    let mut bad = TcpStream::connect(bind).await.unwrap();
+    let mut legacy = 7u32.to_le_bytes().to_vec();
+    legacy.extend_from_slice(&[0, 1]);
+    bad.write_all(&legacy).await.unwrap();
+    let nread = bad.read(&mut buf).await.unwrap();
+    assert_eq!(nread, 0, "legacy 4-byte length prefix closes the connection");
 }

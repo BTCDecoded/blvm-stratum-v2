@@ -3,7 +3,7 @@
 use crate::error::StratumV2Error;
 pub use crate::messages::ShareData;
 use blvm_protocol::{Block, Hash};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
 /// Miner connection information
@@ -60,12 +60,35 @@ pub struct MinerStats {
     pub last_share_time: Option<u64>,
 }
 
+/// Bitcoin header hash: SHA256d of the 80-byte wire header (same as the node blockstore).
+pub fn stratum_header_hash(header: &blvm_protocol::BlockHeader) -> Hash {
+    use sha2::{Digest, Sha256};
+    let mut data = [0u8; 80];
+    data[0..4].copy_from_slice(&(header.version as u32).to_le_bytes());
+    data[4..36].copy_from_slice(&header.prev_block_hash);
+    data[36..68].copy_from_slice(&header.merkle_root);
+    data[68..72].copy_from_slice(&(header.timestamp as u32).to_le_bytes());
+    data[72..76].copy_from_slice(&(header.bits as u32).to_le_bytes());
+    data[76..80].copy_from_slice(&(header.nonce as u32).to_le_bytes());
+    let hash1 = Sha256::digest(data);
+    let hash2 = Sha256::digest(hash1);
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&hash2);
+    result
+}
+
 /// Stratum V2 pool implementation
 pub struct StratumV2Pool {
     /// Connected miners (endpoint -> connection info)
     pub miners: HashMap<String, MinerConnection>,
-    /// Current block template
+    /// Current block template (node-selected / last full broadcast)
     current_template: Option<Block>,
+    /// Per-miner template from that connection's job declaration.
+    miner_templates: HashMap<String, Block>,
+    /// Snapshot id from `commons_get_coinbase_outputs` for this template.
+    commons_snapshot_id: Option<String>,
+    /// sha256(endpoint) miners cut from the notebook. They do not get jobs.
+    banned_miners: HashSet<[u8; 32]>,
     /// Current job ID counter
     job_id_counter: u32,
     /// Default min difficulty for new channels (when miner sends 0)
@@ -78,6 +101,35 @@ impl StratumV2Pool {
         self.current_template.as_ref()
     }
 
+    /// Template this miner is working. Falls back to the last broadcast template.
+    pub fn template_for(&self, endpoint: &str) -> Option<&Block> {
+        self.miner_templates
+            .get(endpoint)
+            .or(self.current_template.as_ref())
+    }
+
+    pub fn commons_snapshot_id(&self) -> Option<&str> {
+        self.commons_snapshot_id.as_deref()
+    }
+
+    pub fn set_commons_snapshot_id(&mut self, id: Option<String>) {
+        self.commons_snapshot_id = id;
+    }
+
+    pub fn commons_miner_id(endpoint: &str) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(endpoint.as_bytes()).into()
+    }
+
+    pub fn set_banned_miners(&mut self, ids: impl IntoIterator<Item = [u8; 32]>) {
+        self.banned_miners = ids.into_iter().collect();
+    }
+
+    pub fn endpoint_is_banned(&self, endpoint: &str) -> bool {
+        self.banned_miners
+            .contains(&Self::commons_miner_id(endpoint))
+    }
+
     /// Create a new pool instance
     pub fn new() -> Self {
         Self::with_default_difficulty(1)
@@ -88,6 +140,9 @@ impl StratumV2Pool {
         Self {
             miners: HashMap::new(),
             current_template: None,
+            miner_templates: HashMap::new(),
+            commons_snapshot_id: None,
+            banned_miners: HashSet::new(),
             job_id_counter: 1,
             default_min_difficulty,
         }
@@ -169,6 +224,9 @@ impl StratumV2Pool {
         // Distribute job to all open channels
         let mut job_distributions = Vec::new();
         for miner in self.miners.values_mut() {
+            if self.banned_miners.contains(&Self::commons_miner_id(&miner.endpoint)) {
+                continue;
+            }
             for (channel_id, channel) in &mut miner.channels {
                 channel.current_job_id = Some(job_id);
                 channel.jobs.insert(job_id, job_info.clone());
@@ -178,10 +236,45 @@ impl StratumV2Pool {
 
         // Store template
         self.current_template = Some(template);
+        self.miner_templates.clear();
 
         info!(
             "Created new mining job: job_id={}, channels={}",
             job_id,
+            job_distributions.len()
+        );
+        (job_id, job_distributions)
+    }
+
+    /// Assign a job to one miner. Does not replace other miners' work.
+    pub fn set_template_for(&mut self, endpoint: &str, template: Block) -> (u32, Vec<(String, u32)>) {
+        let job_id = self.job_id_counter;
+        self.job_id_counter = self.job_id_counter.wrapping_add(1);
+
+        let job_info = JobInfo {
+            job_id,
+            prev_hash: template.header.prev_block_hash,
+            bits: template.header.bits as u32,
+            timestamp: template.header.timestamp,
+        };
+
+        let mut job_distributions = Vec::new();
+        if self.endpoint_is_banned(endpoint) {
+            return (job_id, job_distributions);
+        }
+        if let Some(miner) = self.miners.get_mut(endpoint) {
+            for (channel_id, channel) in &mut miner.channels {
+                channel.current_job_id = Some(job_id);
+                channel.jobs.insert(job_id, job_info.clone());
+                job_distributions.push((miner.endpoint.clone(), *channel_id));
+            }
+        }
+        self.miner_templates.insert(endpoint.to_string(), template);
+
+        info!(
+            "Created miner job: job_id={}, endpoint={}, channels={}",
+            job_id,
+            endpoint,
             job_distributions.len()
         );
         (job_id, job_distributions)
@@ -232,6 +325,16 @@ impl StratumV2Pool {
             self.validate_block(&share, &job_info)
         } else {
             false
+        };
+
+        // Banned miners do not land shares. A valid header is still submitted (H8).
+        let is_valid_share = if is_valid_share
+            && self.endpoint_is_banned(endpoint)
+            && !is_valid_block
+        {
+            false
+        } else {
+            is_valid_share
         };
 
         // Update stats (re-acquire mutable borrow)
@@ -411,26 +514,7 @@ impl StratumV2Pool {
     /// Calculate block hash (double SHA256 of header)
     /// Uses the same serialization as consensus layer for consistency
     pub fn calculate_block_hash(&self, header: &blvm_protocol::BlockHeader) -> Hash {
-        use sha2::{Digest, Sha256};
-
-        // Serialize header exactly as consensus layer does (80 bytes)
-        // Format: version (4 bytes LE), prev_hash (32 bytes), merkle_root (32 bytes),
-        //         timestamp (4 bytes LE), bits (4 bytes LE), nonce (4 bytes LE)
-        let mut data = Vec::with_capacity(80);
-        data.extend_from_slice(&(header.version as u32).to_le_bytes());
-        data.extend_from_slice(&header.prev_block_hash);
-        data.extend_from_slice(&header.merkle_root);
-        data.extend_from_slice(&(header.timestamp as u32).to_le_bytes());
-        data.extend_from_slice(&(header.bits as u32).to_le_bytes());
-        data.extend_from_slice(&(header.nonce as u32).to_le_bytes());
-
-        // Double SHA256
-        let hash1 = Sha256::digest(&data);
-        let hash2 = Sha256::digest(hash1);
-
-        let mut result = [0u8; 32];
-        result.copy_from_slice(&hash2);
-        result
+        stratum_header_hash(header)
     }
 
     /// Compare two hashes as big-endian integers

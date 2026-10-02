@@ -369,6 +369,13 @@ impl NodeAPI for MockNodeAPI {
             "not implemented".into(),
         ))
     }
+    async fn submit_mempool_transaction(
+        &self,
+        _: blvm_protocol::Transaction,
+        _: Option<Vec<blvm_protocol::Witness>>,
+    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
+        Ok(true)
+    }
     async fn register_core_rpc_override(
         &self,
         _: String,
@@ -467,6 +474,8 @@ impl NodeAPI for MockNodeAPI {
 pub struct SubmittingMockNodeAPI {
     inner: MockNodeAPI,
     pub submitted_blocks: std::sync::Arc<tokio::sync::RwLock<Vec<blvm_protocol::Block>>>,
+    pub ingested_txids: std::sync::Arc<tokio::sync::RwLock<Vec<Hash>>>,
+    pub reject_mempool: std::sync::atomic::AtomicBool,
 }
 
 impl Default for SubmittingMockNodeAPI {
@@ -474,6 +483,8 @@ impl Default for SubmittingMockNodeAPI {
         Self {
             inner: MockNodeAPI::default(),
             submitted_blocks: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            ingested_txids: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            reject_mempool: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -803,6 +814,23 @@ impl NodeAPI for SubmittingMockNodeAPI {
     {
         self.submitted_blocks.write().await.push(block);
         Ok(blvm_node::module::traits::SubmitBlockResult::Accepted)
+    }
+    async fn submit_mempool_transaction(
+        &self,
+        tx: blvm_protocol::Transaction,
+        _: Option<Vec<blvm_protocol::Witness>>,
+    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
+        if self
+            .reject_mempool
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(blvm_node::module::traits::ModuleError::OperationError(
+                "mempool policy".into(),
+            ));
+        }
+        let txid = blvm_protocol::block::calculate_tx_id(&tx);
+        self.ingested_txids.write().await.push(txid);
+        Ok(true)
     }
     async fn register_core_rpc_override(
         &self,

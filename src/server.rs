@@ -176,10 +176,7 @@ impl StratumV2Server {
                                     match crate::protocol::parse_sv2_header(&hdr) {
                                         Ok(parsed) => parsed,
                                         Err(e) => {
-                                            warn!(
-                                                "Rejected Stratum frame from {}: {}",
-                                                ep_read, e
-                                            );
+                                            warn!("Rejected Stratum frame from {}: {}", ep_read, e);
                                             break;
                                         }
                                     };
@@ -542,7 +539,11 @@ impl StratumV2Server {
     async fn apply_owner_declaration(&self, endpoint: &str, ids: Vec<Hash>) {
         self.template_generator
             .set_declared_txids(endpoint, Some(ids));
-        match self.template_generator.generate_template_for(endpoint).await {
+        match self
+            .template_generator
+            .generate_template_for(endpoint)
+            .await
+        {
             Ok(template) => {
                 let snap = self.template_generator.last_commons_snapshot();
                 if let Err(e) = self.update_block_template_for(endpoint, template).await {
@@ -1029,8 +1030,7 @@ impl StratumV2Server {
             return encoder.encode(err.message_type(), &err.to_bytes()?);
         }
         for raw in &msg.transaction_list {
-            let parsed =
-                blvm_protocol::serialization::deserialize_transaction_with_witness(raw);
+            let parsed = blvm_protocol::serialization::deserialize_transaction_with_witness(raw);
             let (tx, witnesses) = match parsed {
                 Ok((tx, witnesses, consumed)) if consumed == raw.len() => (tx, witnesses),
                 _ => {
@@ -1231,6 +1231,19 @@ impl StratumV2Server {
                 match result {
                     blvm_node::module::traits::SubmitBlockResult::Accepted => {
                         info!("Block submitted and accepted by node");
+                        if self.template_generator.from_gridpool() {
+                            if let Err(e) = self
+                                .node_api
+                                .call_module(
+                                    Some("blvm-gridpool"),
+                                    "gridpool_note_payment",
+                                    b"{}".to_vec(),
+                                )
+                                .await
+                            {
+                                warn!("gridpool_note_payment: {e}");
+                            }
+                        }
                     }
                     blvm_node::module::traits::SubmitBlockResult::Rejected(reason) => {
                         warn!("Block submitted but rejected: {}", reason);
@@ -1282,6 +1295,10 @@ impl StratumV2Server {
 
     pub fn get_pool(&self) -> Arc<RwLock<StratumV2Pool>> {
         Arc::clone(&self.pool)
+    }
+
+    pub fn template_generator(&self) -> &BlockTemplateGenerator {
+        &self.template_generator
     }
 
     /// Register StratumV2ModuleAPI with the node for merge-mining integration.

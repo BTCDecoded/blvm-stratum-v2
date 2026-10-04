@@ -32,6 +32,9 @@ struct MockDatumNodeAPI {
     last_credit_params: Arc<RwLock<Option<Vec<u8>>>>,
     /// Last `commons_submit_share` JSON body.
     last_submit_share_params: Arc<RwLock<Option<Vec<u8>>>>,
+    /// GridPool `gridpool_get_coinbase_outputs` response.
+    gridpool_payout_response: Option<Vec<u8>>,
+    submit_result: blvm_node::module::traits::SubmitBlockResult,
 }
 
 impl MockDatumNodeAPI {
@@ -48,6 +51,8 @@ impl MockDatumNodeAPI {
             block_template: create_test_block_template(),
             last_credit_params: Arc::new(RwLock::new(None)),
             last_submit_share_params: Arc::new(RwLock::new(None)),
+            gridpool_payout_response: None,
+            submit_result: blvm_node::module::traits::SubmitBlockResult::Accepted,
         }
     }
 
@@ -59,6 +64,8 @@ impl MockDatumNodeAPI {
             block_template: create_test_block_template(),
             last_credit_params: Arc::new(RwLock::new(None)),
             last_submit_share_params: Arc::new(RwLock::new(None)),
+            gridpool_payout_response: None,
+            submit_result: blvm_node::module::traits::SubmitBlockResult::Accepted,
         }
     }
 
@@ -80,6 +87,8 @@ impl MockDatumNodeAPI {
             block_template: create_test_block_template(),
             last_credit_params: Arc::new(RwLock::new(None)),
             last_submit_share_params: Arc::new(RwLock::new(None)),
+            gridpool_payout_response: None,
+            submit_result: blvm_node::module::traits::SubmitBlockResult::Accepted,
         }
     }
 
@@ -118,6 +127,8 @@ impl MockDatumNodeAPI {
             block_template: create_test_block_template(),
             last_credit_params: Arc::new(RwLock::new(None)),
             last_submit_share_params: Arc::new(RwLock::new(None)),
+            gridpool_payout_response: None,
+            submit_result: blvm_node::module::traits::SubmitBlockResult::Accepted,
         }
     }
 
@@ -139,6 +150,8 @@ impl MockDatumNodeAPI {
             block_template: create_test_block_template(),
             last_credit_params: Arc::new(RwLock::new(None)),
             last_submit_share_params: Arc::new(RwLock::new(None)),
+            gridpool_payout_response: None,
+            submit_result: blvm_node::module::traits::SubmitBlockResult::Accepted,
         }
     }
 
@@ -168,6 +181,27 @@ impl MockDatumNodeAPI {
         .into();
         s.block_template.header.merkle_root = [0xee; 32];
         s
+    }
+
+    fn new_with_gridpool_payouts() -> Self {
+        let script = format!("0020{}", "22".repeat(32));
+        let payout_json = serde_json::json!({
+            "outputs": [{"script": script, "value": 50_000_000}],
+            "issue_work": true,
+        });
+        let mut node = Self::new_without_datum();
+        node.gridpool_payout_response = Some(serde_json::to_vec(&payout_json).unwrap());
+        node
+    }
+
+    fn new_with_gridpool_holding() -> Self {
+        let mut node = Self::new_with_gridpool_payouts();
+        let payout_json = serde_json::json!({
+            "outputs": [],
+            "issue_work": false,
+        });
+        node.gridpool_payout_response = Some(serde_json::to_vec(&payout_json).unwrap());
+        node
     }
 
     fn new_with_commons_holding() -> Self {
@@ -498,6 +532,7 @@ impl NodeAPI for MockDatumNodeAPI {
         Ok(match id {
             "datum" => self.datum_payout_response.is_some(),
             "blvm-commons-pool" => self.commons_payout_response.is_some(),
+            "blvm-gridpool" => self.gridpool_payout_response.is_some(),
             _ => false,
         })
     }
@@ -527,6 +562,14 @@ impl NodeAPI for MockDatumNodeAPI {
             if let Some(ref resp) = self.commons_payout_response {
                 return Ok(resp.clone());
             }
+        }
+        if method == "gridpool_get_coinbase_outputs" {
+            if let Some(ref resp) = self.gridpool_payout_response {
+                return Ok(resp.clone());
+            }
+        }
+        if method == "gridpool_note_payment" {
+            return Ok(b"{}".to_vec());
         }
         if method == "submit_pow" {
             return Ok(serde_json::to_vec(&serde_json::json!({ "accepted": true })).unwrap());
@@ -612,7 +655,7 @@ impl NodeAPI for MockDatumNodeAPI {
         _: Block,
     ) -> Result<blvm_node::module::traits::SubmitBlockResult, blvm_node::module::traits::ModuleError>
     {
-        Ok(blvm_node::module::traits::SubmitBlockResult::Accepted)
+        Ok(self.submit_result.clone())
     }
     async fn submit_mempool_transaction(
         &self,
@@ -814,10 +857,7 @@ async fn test_template_submits_commons_share() {
         v.get("share_hash").and_then(|x| x.as_str()).unwrap(),
         "ab".repeat(32)
     );
-    assert_eq!(
-        v.get("snapshot_id").and_then(|x| x.as_str()).unwrap(),
-        snap
-    );
+    assert_eq!(v.get("snapshot_id").and_then(|x| x.as_str()).unwrap(), snap);
     assert_eq!(v.get("bound_height").and_then(|x| x.as_u64()).unwrap(), 100);
     let miner = v.get("miner").and_then(|x| x.as_str()).unwrap();
     assert_eq!(miner.len(), 64);
@@ -828,10 +868,7 @@ async fn test_template_refuses_when_commons_holding() {
     let node_api = Arc::new(MockDatumNodeAPI::new_with_commons_holding());
     let generator = BlockTemplateGenerator::new(node_api);
     let err = generator.generate_template().await.unwrap_err();
-    assert!(
-        err.to_string().contains("holding"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("holding"), "{err}");
 }
 
 #[tokio::test]
@@ -842,7 +879,10 @@ async fn test_template_skips_splice_when_node_already_paid_commons() {
     assert_eq!(block.transactions[0].outputs.len(), 3);
     assert_eq!(block.transactions[0].outputs[0].value, 50_000_000);
     assert_eq!(block.transactions[0].outputs[1].value, 4_950_000_000);
-    assert_eq!(&block.transactions[0].outputs[2].script_pubkey[6..], &[0xcd; 32]);
+    assert_eq!(
+        &block.transactions[0].outputs[2].script_pubkey[6..],
+        &[0xcd; 32]
+    );
     assert_eq!(
         block.header.merkle_root, [0xee; 32],
         "splice must not rewrite a node-built Commons coinbase"
@@ -877,10 +917,7 @@ async fn test_template_refuses_commons_over_coinbase_budget() {
     let generator = BlockTemplateGenerator::new(node_api);
     let err = generator.generate_template().await.unwrap_err();
     let msg = err.to_string();
-    assert!(
-        msg.contains("exceed coinbase budget"),
-        "{msg}"
-    );
+    assert!(msg.contains("exceed coinbase budget"), "{msg}");
 }
 
 #[tokio::test]
@@ -951,9 +988,7 @@ async fn test_submit_shares_calls_datum_submit_pow_on_valid_block() {
     let msg_bytes = msg.to_bytes().unwrap();
     let mut encoder = TlvEncoder::new();
     let encoded = encoder.encode(msg.message_type(), &msg_bytes).unwrap();
-    let msg_result = server
-        .handle_message(encoded, "miner-1".to_string())
-        .await;
+    let msg_result = server.handle_message(encoded, "miner-1".to_string()).await;
     assert!(
         msg_result.is_ok(),
         "handle_message failed: {:?}",
@@ -1012,9 +1047,7 @@ async fn test_submit_shares_calls_commons_submit_share() {
     let msg_bytes = msg.to_bytes().unwrap();
     let mut encoder = TlvEncoder::new();
     let encoded = encoder.encode(msg.message_type(), &msg_bytes).unwrap();
-    let msg_result = server
-        .handle_message(encoded, "miner-1".to_string())
-        .await;
+    let msg_result = server.handle_message(encoded, "miner-1".to_string()).await;
     assert!(
         msg_result.is_ok(),
         "handle_message failed: {:?}",
@@ -1031,14 +1064,150 @@ async fn test_submit_shares_calls_commons_submit_share() {
         .await
         .expect("submit body");
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        v.get("snapshot_id").and_then(|x| x.as_str()).unwrap(),
-        snap
-    );
+    assert_eq!(v.get("snapshot_id").and_then(|x| x.as_str()).unwrap(), snap);
     assert_eq!(v.get("bound_height").and_then(|x| x.as_u64()).unwrap(), 100);
-    assert_eq!(
-        v.get("miner").and_then(|x| x.as_str()).unwrap().len(),
-        64
+    assert_eq!(v.get("miner").and_then(|x| x.as_str()).unwrap().len(), 64);
+}
+
+fn gridpool_script() -> String {
+    format!("0020{}", "22".repeat(32))
+}
+
+async fn submit_genesis_share(node_api: Arc<MockDatumNodeAPI>) -> Vec<(String, usize)> {
+    use blvm_protocol::genesis;
+
+    let ctx = blvm_node::module::traits::ModuleContext {
+        module_id: "test".to_string(),
+        config: std::collections::HashMap::new(),
+        data_dir: "test".to_string(),
+        socket_path: "test".to_string(),
+    };
+    let server = StratumV2Server::new(&ctx, node_api.clone()).await.unwrap();
+    server
+        .template_generator()
+        .generate_template()
+        .await
+        .expect("template");
+    let block = genesis::mainnet_genesis();
+    let pool_handle = server.get_pool();
+    let mut pool = pool_handle.write().await;
+    pool.register_miner("miner-1".to_string());
+    pool.open_channel("miner-1", 1, 0).unwrap();
+    let job_id = pool.set_template(block.clone()).0;
+    drop(pool);
+    let share_data = messages::ShareData {
+        channel_id: 1,
+        job_id,
+        nonce: block.header.nonce as u32,
+        version: block.header.version as i64,
+        merkle_root: block.header.merkle_root,
+    };
+    let msg = SubmitSharesMessage {
+        channel_id: 1,
+        shares: vec![share_data],
+    };
+    let msg_bytes = msg.to_bytes().unwrap();
+    let mut encoder = TlvEncoder::new();
+    let encoded = encoder.encode(msg.message_type(), &msg_bytes).unwrap();
+    server
+        .handle_message(encoded, "miner-1".to_string())
+        .await
+        .unwrap();
+    node_api.get_call_invocations().await
+}
+
+#[tokio::test]
+async fn template_uses_gridpool_outputs_only_when_commons_is_absent() {
+    let grid = Arc::new(MockDatumNodeAPI::new_with_gridpool_payouts());
+    let generator = BlockTemplateGenerator::new(grid.clone());
+    generator.generate_template().await.unwrap();
+    assert!(generator.from_gridpool());
+    let calls = grid.get_call_invocations().await;
+    assert!(
+        calls
+            .iter()
+            .any(|(method, _)| method == "gridpool_get_coinbase_outputs"),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(method, _)| method == "commons_get_coinbase_outputs"
+                || method == "get_coinbase_payout")
+    );
+
+    let mut both = MockDatumNodeAPI::new_with_commons_payouts();
+    both.gridpool_payout_response = Some(
+        serde_json::to_vec(&serde_json::json!({
+            "outputs": [{"script": gridpool_script(), "value": 50_000_000}],
+            "issue_work": true,
+        }))
+        .unwrap(),
+    );
+    let both = Arc::new(both);
+    let generator = BlockTemplateGenerator::new(both.clone());
+    generator.generate_template().await.unwrap();
+    assert!(!generator.from_gridpool());
+    let calls = both.get_call_invocations().await;
+    assert!(
+        calls
+            .iter()
+            .any(|(method, _)| method == "commons_get_coinbase_outputs")
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(method, _)| method == "gridpool_get_coinbase_outputs")
+    );
+}
+
+#[tokio::test]
+async fn empty_gridpool_list_does_not_issue_work() {
+    let node = Arc::new(MockDatumNodeAPI::new_with_gridpool_holding());
+    let generator = BlockTemplateGenerator::new(node);
+    let err = generator.generate_template().await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("not issuing work"), "{msg}");
+}
+
+#[tokio::test]
+async fn accepted_gridpool_block_notes_payment_once() {
+    let node = Arc::new(MockDatumNodeAPI::new_with_gridpool_payouts());
+    let calls = submit_genesis_share(node).await;
+    let notes = calls
+        .iter()
+        .filter(|(method, _)| method == "gridpool_note_payment")
+        .count();
+    assert_eq!(notes, 1, "{calls:?}");
+}
+
+#[tokio::test]
+async fn rejected_or_duplicate_gridpool_block_does_not_note_payment() {
+    for result in [
+        blvm_node::module::traits::SubmitBlockResult::Rejected("no".into()),
+        blvm_node::module::traits::SubmitBlockResult::Duplicate,
+    ] {
+        let mut node = MockDatumNodeAPI::new_with_gridpool_payouts();
+        node.submit_result = result;
+        let calls = submit_genesis_share(Arc::new(node)).await;
+        assert!(
+            !calls
+                .iter()
+                .any(|(method, _)| method == "gridpool_note_payment"),
+            "{calls:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn commons_template_does_not_note_a_gridpool_payment() {
+    let node = Arc::new(MockDatumNodeAPI::new_with_commons_payouts());
+    let calls = submit_genesis_share(node).await;
+    assert!(
+        !calls
+            .iter()
+            .any(|(method, _)| method == "gridpool_note_payment"),
+        "{calls:?}"
     );
 }
 

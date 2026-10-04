@@ -3,8 +3,8 @@
 use crate::error::StratumV2Error;
 use blvm_node::module::traits::NodeAPI;
 use blvm_protocol::{
-    mining::calculate_merkle_root, segwit::compute_witness_merkle_root, Block, Hash,
-    TransactionOutput,
+    Block, Hash, TransactionOutput, mining::calculate_merkle_root,
+    segwit::compute_witness_merkle_root,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,8 @@ pub struct BlockTemplateGenerator {
     node_api: Arc<dyn NodeAPI>,
     last_commons_snapshot: Arc<Mutex<Option<String>>>,
     last_commons_banned: Arc<Mutex<Vec<[u8; 32]>>>,
+    /// This template's coinbase came from GridPool. A Commons template leaves it false.
+    last_from_gridpool: Arc<Mutex<bool>>,
     /// Per-connection declared txids. Missing owner = node selects.
     /// Empty vec = coinbase-only for that miner.
     declared_txids: Arc<Mutex<HashMap<String, Vec<Hash>>>>,
@@ -44,6 +46,7 @@ impl BlockTemplateGenerator {
             node_api,
             last_commons_snapshot: Arc::new(Mutex::new(None)),
             last_commons_banned: Arc::new(Mutex::new(Vec::new())),
+            last_from_gridpool: Arc::new(Mutex::new(false)),
             declared_txids: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -74,6 +77,13 @@ impl BlockTemplateGenerator {
             .unwrap_or_default()
     }
 
+    pub fn from_gridpool(&self) -> bool {
+        self.last_from_gridpool
+            .lock()
+            .map(|flag| *flag)
+            .unwrap_or(false)
+    }
+
     pub fn last_commons_snapshot(&self) -> Option<String> {
         self.last_commons_snapshot
             .lock()
@@ -102,10 +112,7 @@ impl BlockTemplateGenerator {
         self.generate_template_inner(Some(owner)).await
     }
 
-    async fn generate_template_inner(
-        &self,
-        owner: Option<&str>,
-    ) -> Result<Block, StratumV2Error> {
+    async fn generate_template_inner(&self, owner: Option<&str>) -> Result<Block, StratumV2Error> {
         debug!("Generating block template via NodeAPI");
 
         if let Ok(mut g) = self.last_commons_snapshot.lock() {
@@ -113,6 +120,9 @@ impl BlockTemplateGenerator {
         }
         if let Ok(mut g) = self.last_commons_banned.lock() {
             g.clear();
+        }
+        if let Ok(mut g) = self.last_from_gridpool.lock() {
+            *g = false;
         }
         let commons = match self.get_commons_work().await? {
             CommonsWork::Absent => None,
@@ -130,7 +140,19 @@ impl BlockTemplateGenerator {
                 Some(outs)
             }
         };
-        let (coinbase_script, coinbase_address) = if let Some(ref outs) = commons {
+        let mut from_gridpool = false;
+        let payouts = if commons.is_none() {
+            match self.get_gridpool_work().await? {
+                None => None,
+                Some(outs) => {
+                    from_gridpool = true;
+                    Some(outs)
+                }
+            }
+        } else {
+            commons
+        };
+        let (coinbase_script, coinbase_address) = if let Some(ref outs) = payouts {
             let hex_script = hex::encode(&outs[0].script);
             (None, Some(format!("hex:{hex_script}")))
         } else {
@@ -138,7 +160,7 @@ impl BlockTemplateGenerator {
         };
 
         let rules = vec!["segwit".to_string()];
-        let commons_pairs: Vec<(i64, Vec<u8>)> = commons
+        let commons_pairs: Vec<(i64, Vec<u8>)> = payouts
             .as_ref()
             .map(|outs| outs.iter().map(|o| (o.value, o.script.clone())).collect())
             .unwrap_or_default();
@@ -146,12 +168,7 @@ impl BlockTemplateGenerator {
 
         let template = if let Some(txids) = declared {
             self.node_api
-                .get_block_template_declared(
-                    rules,
-                    coinbase_script,
-                    commons_pairs,
-                    txids,
-                )
+                .get_block_template_declared(rules, coinbase_script, commons_pairs, txids)
                 .await
                 .map_err(|e| {
                     StratumV2Error::TemplateError(format!(
@@ -198,13 +215,16 @@ impl BlockTemplateGenerator {
 
         let mut block = block_from_template(template);
 
-        if let Some(outs) = commons {
+        if let Some(outs) = payouts {
             // Pass 28+ NodeAPI GBT already embeds Commons (fit + BIP141).
             // Splice only when the node coinbase is still a single address
             // (published pin without Commons GBT).
             if !node_already_pays_commons(&block.transactions[0], &outs) {
                 apply_commons_payouts(&mut block, &outs)?;
             }
+        }
+        if let Ok(mut g) = self.last_from_gridpool.lock() {
+            *g = from_gridpool;
         }
 
         info!(
@@ -260,10 +280,11 @@ impl BlockTemplateGenerator {
                 .ok_or_else(|| {
                     StratumV2Error::TemplateError("commons output missing value".into())
                 })? as i64;
-            let script = hex::decode(o.get("script").and_then(|s| s.as_str()).ok_or_else(|| {
-                StratumV2Error::TemplateError("commons output missing script".into())
-            })?)
-            .map_err(|e| StratumV2Error::TemplateError(format!("commons script: {e}")))?;
+            let script =
+                hex::decode(o.get("script").and_then(|s| s.as_str()).ok_or_else(|| {
+                    StratumV2Error::TemplateError("commons output missing script".into())
+                })?)
+                .map_err(|e| StratumV2Error::TemplateError(format!("commons script: {e}")))?;
             parsed.push(PayoutOut { value, script });
         }
         let snapshot_id = json
@@ -271,10 +292,7 @@ impl BlockTemplateGenerator {
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        info!(
-            "Using Commons Pool coinbase: {} outputs",
-            parsed.len()
-        );
+        info!("Using Commons Pool coinbase: {} outputs", parsed.len());
         let banned_miners = json
             .get("banned_miners")
             .and_then(|x| x.as_array())
@@ -297,6 +315,59 @@ impl BlockTemplateGenerator {
             snapshot_id,
             banned_miners,
         })
+    }
+
+    /// Commons absent and GridPool loaded. `issue_work: false` refuses work.
+    /// An empty list is not a node-default coinbase.
+    async fn get_gridpool_work(&self) -> Result<Option<Vec<PayoutOut>>, StratumV2Error> {
+        if self
+            .node_api
+            .is_module_available("blvm-gridpool")
+            .await
+            .ok()
+            != Some(true)
+        {
+            return Ok(None);
+        }
+        let response = self
+            .node_api
+            .call_module(
+                Some("blvm-gridpool"),
+                "gridpool_get_coinbase_outputs",
+                vec![],
+            )
+            .await
+            .map_err(|e| StratumV2Error::TemplateError(format!("gridpool outputs: {e}")))?;
+        let json: serde_json::Value = serde_json::from_slice(&response)
+            .map_err(|e| StratumV2Error::TemplateError(format!("gridpool json: {e}")))?;
+        let outs = json
+            .get("outputs")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if json.get("issue_work").and_then(|x| x.as_bool()) == Some(false) || outs.is_empty() {
+            return Err(StratumV2Error::TemplateError(
+                "gridpool is not issuing work".into(),
+            ));
+        }
+        let mut parsed = Vec::with_capacity(outs.len());
+        for o in &outs {
+            let value = o
+                .get("value_sats")
+                .or_else(|| o.get("value"))
+                .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|n| n.max(0) as u64)))
+                .ok_or_else(|| {
+                    StratumV2Error::TemplateError("gridpool output missing value".into())
+                })? as i64;
+            let script =
+                hex::decode(o.get("script").and_then(|s| s.as_str()).ok_or_else(|| {
+                    StratumV2Error::TemplateError("gridpool output missing script".into())
+                })?)
+                .map_err(|e| StratumV2Error::TemplateError(format!("gridpool script: {e}")))?;
+            parsed.push(PayoutOut { value, script });
+        }
+        info!("Using GridPool coinbase: {} outputs", parsed.len());
+        Ok(Some(parsed))
     }
 
     /// Record a valid Stratum share in the notebook. Not a Bitcoin bind.
@@ -328,9 +399,8 @@ impl BlockTemplateGenerator {
             "snapshot_id": snap,
             "bound_height": bound_height,
         });
-        let params = serde_json::to_vec(&body).map_err(|e| {
-            StratumV2Error::TemplateError(format!("commons share json: {e}"))
-        })?;
+        let params = serde_json::to_vec(&body)
+            .map_err(|e| StratumV2Error::TemplateError(format!("commons share json: {e}")))?;
         match self
             .node_api
             .call_module(Some("blvm-commons-pool"), "commons_submit_share", params)
@@ -363,9 +433,10 @@ impl BlockTemplateGenerator {
         {
             return Ok(());
         }
-        let coinbase = block.transactions.first().ok_or_else(|| {
-            StratumV2Error::TemplateError("found block missing coinbase".into())
-        })?;
+        let coinbase = block
+            .transactions
+            .first()
+            .ok_or_else(|| StratumV2Error::TemplateError("found block missing coinbase".into()))?;
         let outputs: Vec<serde_json::Value> = coinbase
             .outputs
             .iter()
@@ -384,12 +455,10 @@ impl BlockTemplateGenerator {
             use sha2::{Digest, Sha256};
             body["miner"] = serde_json::json!(hex::encode(Sha256::digest(ep.as_bytes())));
         }
-        body["block_hash"] = serde_json::json!(hex::encode(crate::pool::stratum_header_hash(
-            &block.header
-        )));
-        let params = serde_json::to_vec(&body).map_err(|e| {
-            StratumV2Error::TemplateError(format!("commons credit json: {e}"))
-        })?;
+        body["block_hash"] =
+            serde_json::json!(hex::encode(crate::pool::stratum_header_hash(&block.header)));
+        let params = serde_json::to_vec(&body)
+            .map_err(|e| StratumV2Error::TemplateError(format!("commons credit json: {e}")))?;
         match self
             .node_api
             .call_module(Some("blvm-commons-pool"), "commons_credit_find", params)
@@ -523,18 +592,16 @@ fn apply_commons_payouts(block: &mut Block, outs: &[PayoutOut]) -> Result<(), St
             header: block.header.clone(),
             transactions: txs.clone().into_boxed_slice(),
         };
-        let root = compute_witness_merkle_root(&tmp, &witnesses).map_err(|e| {
-            StratumV2Error::TemplateError(format!("witness merkle: {e}"))
-        })?;
+        let root = compute_witness_merkle_root(&tmp, &witnesses)
+            .map_err(|e| StratumV2Error::TemplateError(format!("witness merkle: {e}")))?;
         cb_outs.push(TransactionOutput {
             value: 0,
             script_pubkey: bip141_commitment_script(&root, &[0u8; 32]),
         });
     }
     txs[0].outputs = cb_outs.into();
-    let merkle = calculate_merkle_root(&txs).map_err(|e| {
-        StratumV2Error::TemplateError(format!("merkle after commons payouts: {e}"))
-    })?;
+    let merkle = calculate_merkle_root(&txs)
+        .map_err(|e| StratumV2Error::TemplateError(format!("merkle after commons payouts: {e}")))?;
     block.header.merkle_root = merkle;
     block.transactions = txs.into_boxed_slice();
     Ok(())
@@ -543,16 +610,16 @@ fn apply_commons_payouts(block: &mut Block, outs: &[PayoutOut]) -> Result<(), St
 /// Same rule as consensus `fit_payouts_to_reward`: overflow is an error;
 /// shortfall tops up the first output. Budget is the node's coinbase total
 /// (subsidy, and fees if the template already included them).
-fn fit_payouts_to_budget(outs: &[PayoutOut], budget: i64) -> Result<Vec<PayoutOut>, StratumV2Error> {
+fn fit_payouts_to_budget(
+    outs: &[PayoutOut],
+    budget: i64,
+) -> Result<Vec<PayoutOut>, StratumV2Error> {
     if outs.is_empty() {
         return Err(StratumV2Error::TemplateError(
             "commons payouts empty".into(),
         ));
     }
-    let sum = outs
-        .iter()
-        .map(|o| o.value)
-        .fold(0i64, i64::saturating_add);
+    let sum = outs.iter().map(|o| o.value).fold(0i64, i64::saturating_add);
     if sum > budget {
         return Err(StratumV2Error::TemplateError(format!(
             "commons payouts {sum} exceed coinbase budget {budget}"

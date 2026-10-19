@@ -1,6 +1,6 @@
 //! Tests for Stratum V2 Protocol Encoding/Decoding
 
-use blvm_stratum_v2::protocol::{decode_sv2_frame, TlvDecoder, TlvEncoder};
+use blvm_stratum_v2::protocol::{TlvDecoder, TlvEncoder, decode_sv2_frame};
 
 #[test]
 fn test_tlv_encode_decode() {

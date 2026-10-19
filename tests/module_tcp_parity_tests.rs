@@ -11,7 +11,7 @@ use blvm_stratum_v2::{
         self, OpenMiningChannelMessage, SetupConnectionMessage, StratumV2Message,
         SubmitSharesMessage, message_types,
     },
-    protocol::{parse_sv2_header, TlvEncoder},
+    protocol::{TlvEncoder, parse_sv2_header},
     server::StratumV2Server,
 };
 use common::SubmittingMockNodeAPI;
@@ -243,12 +243,18 @@ async fn module_tcp_header_only_accepted_legacy_prefix_rejected() {
     ok_stream.write_all(&header_only).await.unwrap();
     let mut buf = [0u8; 1];
     let nread = ok_stream.read(&mut buf).await.unwrap();
-    assert_eq!(nread, 0, "header-only frame is consumed; empty payload is not a setup");
+    assert_eq!(
+        nread, 0,
+        "header-only frame is consumed; empty payload is not a setup"
+    );
 
     let mut bad = TcpStream::connect(bind).await.unwrap();
     let mut legacy = 7u32.to_le_bytes().to_vec();
     legacy.extend_from_slice(&[0, 1]);
     bad.write_all(&legacy).await.unwrap();
     let nread = bad.read(&mut buf).await.unwrap();
-    assert_eq!(nread, 0, "legacy 4-byte length prefix closes the connection");
+    assert_eq!(
+        nread, 0,
+        "legacy 4-byte length prefix closes the connection"
+    );
 }

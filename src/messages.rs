@@ -229,9 +229,10 @@ mod wire {
             Self { data, i: 0 }
         }
         fn take(&mut self, n: usize) -> Result<&'a [u8], StratumV2Error> {
-            let end = self.i.checked_add(n).ok_or_else(|| {
-                StratumV2Error::ProtocolError("truncated field".into())
-            })?;
+            let end = self
+                .i
+                .checked_add(n)
+                .ok_or_else(|| StratumV2Error::ProtocolError("truncated field".into()))?;
             if end > self.data.len() {
                 return Err(StratumV2Error::ProtocolError("truncated field".into()));
             }

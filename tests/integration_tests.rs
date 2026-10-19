@@ -9,7 +9,7 @@ use blvm_protocol::{
 };
 use blvm_stratum_v2::{
     messages::{self, *},
-    protocol::{decode_sv2_frame, TlvEncoder},
+    protocol::{TlvEncoder, decode_sv2_frame},
     server::StratumV2Server,
 };
 use common::SubmittingMockNodeAPI;
@@ -385,7 +385,10 @@ async fn provide_missing_from_other_endpoint_is_rejected() {
     };
     let bob = server
         .handle_message(
-            encode_inner(message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS, &provide),
+            encode_inner(
+                message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS,
+                &provide,
+            ),
             "bob".into(),
         )
         .await
@@ -401,7 +404,10 @@ async fn provide_missing_from_other_endpoint_is_rejected() {
 
     let alice = server
         .handle_message(
-            encode_inner(message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS, &provide),
+            encode_inner(
+                message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS,
+                &provide,
+            ),
             "alice".into(),
         )
         .await
@@ -465,7 +471,10 @@ async fn provide_missing_mempool_reject_does_not_accept() {
     };
     let alice = server
         .handle_message(
-            encode_inner(message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS, &provide),
+            encode_inner(
+                message_types::PROVIDE_MISSING_TRANSACTIONS_SUCCESS,
+                &provide,
+            ),
             "alice".into(),
         )
         .await

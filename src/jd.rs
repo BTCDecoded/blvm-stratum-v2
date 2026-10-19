@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
+use blvm_protocol::Hash;
 use blvm_protocol::block::calculate_tx_id;
 use blvm_protocol::serialization::deserialize_transaction_with_offset;
-use blvm_protocol::Hash;
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
@@ -116,8 +116,7 @@ impl JobDeclarationState {
             return None;
         }
         self.consume_token(&p.token);
-        self.last_declared_by_owner
-            .insert(p.owner, p.txids.clone());
+        self.last_declared_by_owner.insert(p.owner, p.txids.clone());
         Some(p.txids)
     }
 

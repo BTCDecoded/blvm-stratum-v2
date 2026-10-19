@@ -164,18 +164,14 @@ pub fn parse_sv2_header(hdr: &[u8; 6]) -> ProtocolResult<(u8, usize)> {
 /// One official frame from `buf`. Header-only (payload length 0) is a complete frame.
 pub fn take_sv2_frame(buf: &[u8]) -> ProtocolResult<(Vec<u8>, usize)> {
     if buf.len() < 6 {
-        return Err(StratumV2Error::ProtocolError(
-            "short SV2 header".into(),
-        ));
+        return Err(StratumV2Error::ProtocolError("short SV2 header".into()));
     }
     let mut hdr = [0u8; 6];
     hdr.copy_from_slice(&buf[..6]);
     let (_typ, len) = parse_sv2_header(&hdr)?;
     let total = 6 + len;
     if buf.len() < total {
-        return Err(StratumV2Error::ProtocolError(
-            "truncated SV2 frame".into(),
-        ));
+        return Err(StratumV2Error::ProtocolError("truncated SV2 frame".into()));
     }
     Ok((buf[..total].to_vec(), total))
 }
@@ -262,12 +258,14 @@ mod sv2_frame_tests {
         let mut legacy = Vec::new();
         legacy.extend_from_slice(&7u32.to_le_bytes());
         legacy.extend_from_slice(&[0, 1]);
-        assert!(parse_sv2_header(&{
-            let mut h = [0u8; 6];
-            h.copy_from_slice(&legacy);
-            h
-        })
-        .is_err());
+        assert!(
+            parse_sv2_header(&{
+                let mut h = [0u8; 6];
+                h.copy_from_slice(&legacy);
+                h
+            })
+            .is_err()
+        );
         let (tag, payload, official) = decode_incoming(&encode_sv2_frame(0x50, b"ab")).unwrap();
         assert!(official);
         assert_eq!(tag, 0x0050);

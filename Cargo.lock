@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "blvm-consensus"
-version = "0.1.35"
+version = "0.1.61"
 dependencies = [
  "bitcoin_hashes",
  "blvm-primitives",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "blvm-muhash"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "chacha20 0.9.1",
  "cipher 0.4.4",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "blvm-primitives"
-version = "0.1.18"
+version = "0.1.26"
 dependencies = [
  "bitcoin_hashes",
  "ripemd",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "blvm-protocol"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bech32",
@@ -448,6 +448,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
+ "siphasher 0.3.11",
  "smallvec",
  "sparse-merkle-tree",
  "thiserror 1.0.69",
@@ -461,7 +462,7 @@ dependencies = [
  "anyhow",
  "base64",
  "blvm-node",
- "blvm-sdk-macros",
+ "blvm-sdk-macros 0.1.0",
  "blvm-secp256k1",
  "chrono",
  "clap",
@@ -492,8 +493,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blvm-sdk-macros"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1a115f742a5b674546c026e20b2607e807b12effb8545a22375ea91005a914e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "blvm-secp256k1"
-version = "0.1.10"
+version = "0.1.12"
 dependencies = [
  "cc",
  "crossbeam-channel",
@@ -506,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "blvm-spec-lock"
-version = "0.1.39"
+version = "0.1.43"
 dependencies = [
  "anyhow",
  "clap",
@@ -532,7 +544,7 @@ dependencies = [
  "blvm-node",
  "blvm-protocol",
  "blvm-sdk",
- "blvm-sdk-macros",
+ "blvm-sdk-macros 0.1.17",
  "futures",
  "hex",
  "serde",

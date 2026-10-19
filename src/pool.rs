@@ -93,6 +93,8 @@ pub struct StratumV2Pool {
     job_id_counter: u32,
     /// Default min difficulty for new channels (when miner sends 0)
     default_min_difficulty: u32,
+    /// Merge-mining hits recorded against a block hash.
+    merge_hits: HashMap<Hash, Vec<u32>>,
 }
 
 impl StratumV2Pool {
@@ -145,7 +147,63 @@ impl StratumV2Pool {
             banned_miners: HashSet::new(),
             job_id_counter: 1,
             default_min_difficulty,
+            merge_hits: HashMap::new(),
         }
+    }
+
+    /// Store a merge-mining channel on this pool.
+    pub fn register_merge_channel(
+        &mut self,
+        endpoint: &str,
+        channel_id: u32,
+    ) -> Result<(), String> {
+        if !self.miners.contains_key(endpoint) {
+            self.register_miner(endpoint.to_string());
+        }
+        self.open_channel(endpoint, channel_id, 1)
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    /// Previous hash, merkle root, time, and bits of the current template.
+    pub fn merge_template(&self) -> Option<(Hash, Hash, u64, u64)> {
+        self.current_template.as_ref().map(|block| {
+            (
+                block.header.prev_block_hash,
+                block.header.merkle_root,
+                block.header.timestamp,
+                block.header.bits,
+            )
+        })
+    }
+
+    /// Accept a share whose hash is within the current template target and record that hit.
+    pub fn submit_merge_share(
+        &mut self,
+        channel_id: u32,
+        share_hash: Hash,
+    ) -> Result<bool, String> {
+        let bits = self
+            .current_template
+            .as_ref()
+            .map(|block| block.header.bits)
+            .ok_or_else(|| "no template".to_string())?;
+        let target = blvm_consensus::pow::expand_target(bits)
+            .map_err(|err| err.to_string())?
+            .to_be_bytes();
+        if !self.hash_less_than_or_equal(&share_hash, &target) {
+            return Ok(false);
+        }
+        self.merge_hits
+            .entry(share_hash)
+            .or_default()
+            .push(channel_id);
+        Ok(true)
+    }
+
+    /// Channels that recorded a hit for this block. An unrecorded block is an empty list.
+    pub fn merge_rewards(&self, block_hash: &Hash) -> Vec<u32> {
+        self.merge_hits.get(block_hash).cloned().unwrap_or_default()
     }
 
     /// Set default min difficulty for new channels
@@ -224,7 +282,10 @@ impl StratumV2Pool {
         // Distribute job to all open channels
         let mut job_distributions = Vec::new();
         for miner in self.miners.values_mut() {
-            if self.banned_miners.contains(&Self::commons_miner_id(&miner.endpoint)) {
+            if self
+                .banned_miners
+                .contains(&Self::commons_miner_id(&miner.endpoint))
+            {
                 continue;
             }
             for (channel_id, channel) in &mut miner.channels {
@@ -247,7 +308,11 @@ impl StratumV2Pool {
     }
 
     /// Assign a job to one miner. Does not replace other miners' work.
-    pub fn set_template_for(&mut self, endpoint: &str, template: Block) -> (u32, Vec<(String, u32)>) {
+    pub fn set_template_for(
+        &mut self,
+        endpoint: &str,
+        template: Block,
+    ) -> (u32, Vec<(String, u32)>) {
         let job_id = self.job_id_counter;
         self.job_id_counter = self.job_id_counter.wrapping_add(1);
 
@@ -328,14 +393,12 @@ impl StratumV2Pool {
         };
 
         // Banned miners do not land shares. A valid header is still submitted (H8).
-        let is_valid_share = if is_valid_share
-            && self.endpoint_is_banned(endpoint)
-            && !is_valid_block
-        {
-            false
-        } else {
-            is_valid_share
-        };
+        let is_valid_share =
+            if is_valid_share && self.endpoint_is_banned(endpoint) && !is_valid_block {
+                false
+            } else {
+                is_valid_share
+            };
 
         // Update stats (re-acquire mutable borrow)
         if let Some(miner) = self.miners.get_mut(&endpoint_key) {

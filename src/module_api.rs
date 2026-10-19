@@ -53,22 +53,91 @@ impl ModuleAPI for StratumV2ModuleAPI {
         params: &[u8],
         _caller_module_id: &str,
     ) -> Result<Vec<u8>, ModuleError> {
-        let _ = params;
+        let params = if params.is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_slice::<serde_json::Value>(params) {
+                Ok(value) => value,
+                Err(_) => {
+                    return Err(ModuleError::OperationError(
+                        "invalid merge-mining parameters".into(),
+                    ));
+                }
+            }
+        };
         let result: Result<serde_json::Value, String> = match method {
             API_METHOD_REGISTER_MERGE_MINING_CHANNEL => {
-                Err(
-                    "merge-mining channel registration is not implemented on this module"
-                        .to_string(),
-                )
+                let endpoint = params
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("merge")
+                    .to_string();
+                let channel_id = params
+                    .get("channel_id")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1) as u32;
+                let mut pool = self.pool.write().await;
+                match pool.register_merge_channel(&endpoint, channel_id) {
+                    Ok(()) => Ok(serde_json::json!({
+                        "endpoint": endpoint,
+                        "channel_id": channel_id
+                    })),
+                    Err(reason) => Err(reason),
+                }
             }
             API_METHOD_GET_MERGE_MINING_TEMPLATE => {
-                Err("merge-mining templates are not implemented on this module".to_string())
+                let pool = self.pool.read().await;
+                Ok(match pool.merge_template() {
+                    Some((prev_hash, merkle_root, timestamp, bits)) => serde_json::json!({
+                        "prev_hash": hex::encode(prev_hash),
+                        "merkle_root": hex::encode(merkle_root),
+                        "timestamp": timestamp,
+                        "bits": bits
+                    }),
+                    None => serde_json::json!({ "template": null }),
+                })
             }
-            API_METHOD_SUBMIT_MERGE_MINING_SHARE => {
-                Err("merge-mining share submission is not implemented on this module".to_string())
+            API_METHOD_SUBMIT_MERGE_MINING_SHARE => 'submit: {
+                let channel_id = params
+                    .get("channel_id")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let Some(hash_hex) = params.get("hash").and_then(|v| v.as_str()) else {
+                    break 'submit Err("share hash is required".to_string());
+                };
+                let Ok(bytes) = hex::decode(hash_hex) else {
+                    break 'submit Err("share hash is not hex".to_string());
+                };
+                if bytes.len() != 32 {
+                    break 'submit Err("share hash must be 32 bytes".to_string());
+                }
+                let mut share_hash = [0u8; 32];
+                share_hash.copy_from_slice(&bytes);
+                let mut pool = self.pool.write().await;
+                match pool.submit_merge_share(channel_id, share_hash) {
+                    Ok(accepted) => Ok(serde_json::json!({ "accepted": accepted })),
+                    Err(reason) => Err(reason),
+                }
             }
             API_METHOD_GET_BLOCK_MERGE_MINING_REWARDS => {
-                Err("merge-mining rewards are not implemented on this module".to_string())
+                let hash_hex = params
+                    .get("block_hash")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let rewards = if hash_hex.is_empty() {
+                    Vec::new()
+                } else {
+                    let bytes = hex::decode(hash_hex).unwrap_or_default();
+                    if bytes.len() != 32 {
+                        Vec::new()
+                    } else {
+                        let mut block_hash = [0u8; 32];
+                        block_hash.copy_from_slice(&bytes);
+                        let pool = self.pool.read().await;
+                        pool.merge_rewards(&block_hash)
+                    }
+                };
+                Ok(serde_json::json!({ "rewards": rewards }))
             }
             API_METHOD_GET_TEMPLATE => {
                 let pool = self.pool.read().await;

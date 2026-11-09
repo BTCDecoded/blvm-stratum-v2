@@ -31,7 +31,7 @@ The module integrates with blvm-node through the NodeAPI interface:
 │                 │
 │ ┌─────────────┐ │
 │ │ SV2 Server  │ │◄─── Stratum V2 Miners
-│ └─────────────┘ │     (Encrypted Protocol)
+│ └─────────────┘ │     (bincode; no Noise key)
 └─────────────────┘
 ```
 

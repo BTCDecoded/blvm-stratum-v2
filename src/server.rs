@@ -372,14 +372,6 @@ impl StratumV2Server {
                             debug!("Pool difficulty will be updated on next job creation");
                         }
                     }
-                    EventType::MiningJobCreated => {
-                        debug!("Mining job created event received");
-                        // Job creation is handled by BlockTemplateUpdated
-                    }
-                    EventType::ShareSubmitted => {
-                        debug!("Share submitted event received");
-                        // Share submission is handled by pool
-                    }
                     EventType::StratumV2MessageReceived => {
                         debug!("Stratum V2 message received event");
                         if let EventPayload::StratumV2MessageReceived {
@@ -918,18 +910,6 @@ impl StratumV2Server {
         let mut pool = self.pool.write().await;
         pool.register_miner(endpoint.to_string());
 
-        let payload = EventPayload::StratumClientConnected {
-            endpoint: endpoint.to_string(),
-            protocol_version: 2,
-        };
-        if let Err(e) = self
-            .node_api
-            .publish_event(EventType::StratumClientConnected, payload)
-            .await
-        {
-            warn!("Failed to publish StratumClientConnected: {}", e);
-        }
-
         Ok(crate::messages::SetupConnectionSuccessMessage {
             supported_versions: vec![2], // Stratum V2
             capabilities: vec!["mining".to_string()],
@@ -1131,18 +1111,6 @@ impl StratumV2Server {
 
             if is_valid_share && !pool.endpoint_is_banned(endpoint) {
                 if let Some(share_hash) = pool.get_share_hash(endpoint, &share_data) {
-                    let payload = EventPayload::ShareSubmitted {
-                        job_id: share_data.job_id.to_string(),
-                        share_hash,
-                        miner_id: Some(endpoint.to_string()),
-                    };
-                    if let Err(e) = self
-                        .node_api
-                        .publish_event(EventType::ShareSubmitted, payload)
-                        .await
-                    {
-                        debug!("Failed to publish ShareSubmitted: {}", e);
-                    }
                     let snap = pool.commons_snapshot_id().map(|s| s.to_string());
                     let height = self.node_api.get_block_height().await.unwrap_or(0);
                     if let Err(e) = self
@@ -1272,25 +1240,10 @@ impl StratumV2Server {
     }
 
     /// Get pool reference for cleanup operations
-    /// Clean up disconnected miners and publish StratumClientDisconnected for each.
+    /// Clean up disconnected miners.
     pub async fn cleanup_and_publish_disconnected(&self, timeout_seconds: u64) {
-        let removed = {
-            let mut pool = self.pool.write().await;
-            pool.cleanup_disconnected_miners(timeout_seconds)
-        };
-        for endpoint in removed {
-            let payload = EventPayload::StratumClientDisconnected {
-                endpoint: endpoint.clone(),
-                reason: "timeout".to_string(),
-            };
-            if let Err(e) = self
-                .node_api
-                .publish_event(EventType::StratumClientDisconnected, payload)
-                .await
-            {
-                warn!("Failed to publish StratumClientDisconnected: {}", e);
-            }
-        }
+        let mut pool = self.pool.write().await;
+        pool.cleanup_disconnected_miners(timeout_seconds);
     }
 
     pub fn get_pool(&self) -> Arc<RwLock<StratumV2Pool>> {

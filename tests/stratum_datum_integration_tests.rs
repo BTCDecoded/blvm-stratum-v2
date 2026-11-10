@@ -259,7 +259,7 @@ fn create_test_block_template() -> blvm_protocol::mining::BlockTemplate {
         },
         coinbase_tx: coinbase,
         transactions: vec![],
-        target: 0x00000000ffff00000000000000000000u128,
+        target: blvm_protocol::pow::U256::from_u128(0x00000000ffff00000000000000000000u128),
         height: 100,
         timestamp: 1700000000,
     }
@@ -357,7 +357,7 @@ impl NodeAPI for MockDatumNodeAPI {
         Ok(blvm_node::module::traits::ChainInfo {
             tip_hash: [0u8; 32],
             height: 100,
-            difficulty: 1,
+            difficulty: 1.0,
             chain_work: 0,
             is_synced: true,
         })

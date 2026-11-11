@@ -22,8 +22,6 @@ impl StratumV2Module {
         BlockMined,
         BlockTemplateUpdated,
         MiningDifficultyChanged,
-        MiningJobCreated,
-        ShareSubmitted,
         StratumV2MessageReceived
     )]
     async fn on_stratum_event(

@@ -139,13 +139,11 @@ capabilities = [
 ### Subscribed Events
 
 - `BlockMined`, `BlockTemplateUpdated`, `MiningDifficultyChanged`
-- `MiningJobCreated`, `ShareSubmitted` (coordination with other modules)
 - `StratumV2MessageReceived` (P2P Stratum TLV when node feature enabled)
 
 ### Published Events
 
-- `StratumClientConnected`, `StratumClientDisconnected`
-- `ShareSubmitted` (valid share accepted)
+None. `ShareSubmitted`, `MiningJobCreated`, `StratumClientConnected`, and `StratumClientDisconnected` were reserved in blvm-node e292087 (F5, bincode slots only) and are no longer published.
 
 ## Share Validation
 

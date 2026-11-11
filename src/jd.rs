@@ -230,8 +230,8 @@ mod tests {
         let mut s = JobDeclarationState::default();
         let a = s.allocate_token("alice");
         let b = s.allocate_token("bob");
-        let tx_a: Hash = sha256d(b"a").into();
-        let tx_b: Hash = sha256d(b"b").into();
+        let tx_a: Hash = sha256d(b"a");
+        let tx_b: Hash = sha256d(b"b");
         s.begin_declare(1, a, "alice".into(), vec![tx_a], vec![0]);
         s.begin_declare(1, b, "bob".into(), vec![tx_b], vec![0]);
         let pa = s.pending("alice", 1).unwrap();
@@ -253,9 +253,9 @@ mod tests {
         let a1 = s.allocate_token("alice");
         let a2 = s.allocate_token("alice");
         let b = s.allocate_token("bob");
-        let tx_a: Hash = sha256d(b"a").into();
-        let tx_retry: Hash = sha256d(b"retry").into();
-        let tx_b: Hash = sha256d(b"b").into();
+        let tx_a: Hash = sha256d(b"a");
+        let tx_retry: Hash = sha256d(b"retry");
+        let tx_b: Hash = sha256d(b"b");
         s.begin_declare(1, a1, "alice".into(), vec![tx_a], vec![0]);
         s.begin_declare(1, b, "bob".into(), vec![tx_b], vec![0]);
         s.begin_declare(1, a2, "alice".into(), vec![tx_retry], vec![]);

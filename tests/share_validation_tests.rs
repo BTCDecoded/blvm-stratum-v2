@@ -11,6 +11,7 @@ async fn test_validate_share_invalid_job_id() {
     let job_info = JobInfo {
         job_id: 1,
         prev_hash: [0u8; 32],
+        merkle_root: [0u8; 32],
         bits: 0x1d00ffff,
         timestamp: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -40,12 +41,13 @@ async fn test_validate_share_timestamp_too_old() {
     let job_info = JobInfo {
         job_id: 1,
         prev_hash: [0u8; 32],
+        merkle_root: [0u8; 32],
         bits: 0x1d00ffff,
         timestamp: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
-            .saturating_sub(10000), // 10k seconds ago (too old)
+            .saturating_sub(700_000_000),
     };
 
     let share = ShareData {
@@ -116,10 +118,10 @@ async fn test_calculate_channel_target() {
     assert_eq!(target1.len(), 32);
     assert_eq!(target2.len(), 32);
 
-    // Higher difficulty should result in easier target (higher value)
-    // target2 should be >= target1 (easier)
-    assert!(
-        pool.hash_less_than_or_equal(&target1, &target2)
-            || pool.hash_less_than_or_equal(&target2, &target1)
-    );
+    // Difficulty 1 is the Bitcoin difficulty-1 target, not a 128-bit stub.
+    assert_eq!(target1[4], 0xff);
+    assert_eq!(target1[5], 0xff);
+    // A larger difficulty value is an easier target.
+    assert!(pool.hash_less_than_or_equal(&target1, &target2));
+    assert!(!pool.hash_less_than_or_equal(&[0xff; 32], &target1));
 }

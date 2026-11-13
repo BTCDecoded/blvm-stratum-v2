@@ -42,10 +42,10 @@ async fn test_cleanup_old_jobs() {
         pool.set_template(block);
     }
 
-    // Check that we have 5 jobs
+    // A new template drops jobs past max_jobs. Five creates leave three.
     if let Some(miner) = pool.miners.get("test-miner") {
         if let Some(channel) = miner.channels.get(&1) {
-            assert_eq!(channel.jobs.len(), 5);
+            assert_eq!(channel.jobs.len(), 3);
         }
     }
 

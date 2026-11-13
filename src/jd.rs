@@ -17,6 +17,10 @@ pub struct PendingDeclare {
 }
 
 const MAX_TOKENS: usize = 256;
+/// Pending declarations kept across every connection.
+pub const MAX_PENDING_DECLARES: usize = 32;
+/// Transaction ids one declaration may name.
+pub const MAX_DECLARED_TXIDS: usize = 20_000;
 
 #[derive(Debug, Default)]
 pub struct JobDeclarationState {
@@ -65,8 +69,14 @@ impl JobDeclarationState {
         owner: String,
         txids: Vec<Hash>,
         missing: Vec<u16>,
-    ) {
+    ) -> bool {
+        if txids.len() > MAX_DECLARED_TXIDS {
+            return false;
+        }
         let key = (owner.clone(), request_id);
+        if !self.pending.contains_key(&key) && self.pending.len() >= MAX_PENDING_DECLARES {
+            return false;
+        }
         self.pending.insert(
             key,
             PendingDeclare {
@@ -76,6 +86,7 @@ impl JobDeclarationState {
                 missing,
             },
         );
+        true
     }
 
     /// Each body must be a Bitcoin tx (exact wire bytes) whose txid is the declared hash.

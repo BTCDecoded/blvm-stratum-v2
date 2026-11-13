@@ -940,12 +940,35 @@ async fn test_pool_accepts_mined_block_share() {
         version: block.header.version as i64,
         merkle_root: block.header.merkle_root,
     };
-    let (is_valid_share, is_valid_block) = pool.handle_share("miner-1", share_data).unwrap();
+    let (is_valid_share, is_valid_block) =
+        pool.handle_share("miner-1", share_data.clone()).unwrap();
     assert!(is_valid_share, "Share should be valid (channel target)");
     assert!(
         is_valid_block,
         "Share should be valid block (network target)"
     );
+
+    let (again, _) = pool.handle_share("miner-1", share_data).unwrap();
+    assert!(!again, "replaying the same share is not new work");
+
+    let mut strict = StratumV2Pool::new();
+    strict.register_miner("miner-1".to_string());
+    strict.open_channel("miner-1", 1, 1).unwrap();
+    let (job_id, _) = strict.set_template(block.clone());
+    let (ok_share, ok_block) = strict
+        .handle_share(
+            "miner-1",
+            blvm_stratum_v2::pool::ShareData {
+                channel_id: 1,
+                job_id,
+                nonce: block.header.nonce as u32,
+                version: block.header.version as i64,
+                merkle_root: block.header.merkle_root,
+            },
+        )
+        .unwrap();
+    assert!(ok_share, "difficulty 1 still accepts a real header");
+    assert!(ok_block, "difficulty 1 still recognizes a real block");
 }
 
 #[tokio::test]
@@ -1179,6 +1202,24 @@ async fn accepted_gridpool_block_notes_payment_once() {
         .filter(|(method, _)| method == "gridpool_note_payment")
         .count();
     assert_eq!(notes, 1, "{calls:?}");
+}
+
+#[tokio::test]
+async fn duplicate_or_rejected_block_does_not_credit_a_find() {
+    for result in [
+        blvm_node::module::traits::SubmitBlockResult::Rejected("no".into()),
+        blvm_node::module::traits::SubmitBlockResult::Duplicate,
+    ] {
+        let mut node = MockDatumNodeAPI::new_with_commons_payouts();
+        node.submit_result = result;
+        let calls = submit_genesis_share(Arc::new(node)).await;
+        assert!(
+            !calls
+                .iter()
+                .any(|(method, _)| method == "commons_credit_find"),
+            "{calls:?}"
+        );
+    }
 }
 
 #[tokio::test]

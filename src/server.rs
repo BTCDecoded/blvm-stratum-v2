@@ -21,6 +21,14 @@ use tracing::{debug, error, info, warn};
 /// Max TLV frame body (after 4-byte LE length prefix); same cap as the historical in-node listener.
 const MAX_STRATUM_FRAME_BODY: usize = 1024 * 1024;
 
+/// Miner TCP connections accepted when the config value is missing or unreadable.
+const DEFAULT_MAX_CONNECTIONS: u32 = 100;
+
+/// Accept another miner while `active` is below `cap`.
+pub(crate) fn admit_miner(active: usize, cap: u32) -> bool {
+    active < cap as usize
+}
+
 /// Stratum V2 server
 pub struct StratumV2Server {
     /// Server configuration
@@ -37,6 +45,8 @@ pub struct StratumV2Server {
     local_miner_tx: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>>,
     /// Actual bound address after module TCP `bind` (set for `127.0.0.1:0` / tests; `None` if bind failed or not started).
     module_tcp_bound_addr: Arc<RwLock<Option<SocketAddr>>>,
+    /// Miner TCP cap. Missing config uses [`DEFAULT_MAX_CONNECTIONS`].
+    max_connections: u32,
     jd: Arc<RwLock<JobDeclarationState>>,
 }
 
@@ -51,6 +61,13 @@ impl StratumV2Server {
             .get_config_or("stratum_v2.difficulty_target", "1")
             .parse()
             .unwrap_or(1);
+        let max_connections = ctx
+            .get_config_or(
+                "stratum_v2.max_connections",
+                &DEFAULT_MAX_CONNECTIONS.to_string(),
+            )
+            .parse()
+            .unwrap_or(DEFAULT_MAX_CONNECTIONS);
 
         let pool = Arc::new(RwLock::new(StratumV2Pool::with_default_difficulty(
             difficulty_target,
@@ -65,6 +82,7 @@ impl StratumV2Server {
             running: Arc::new(RwLock::new(false)),
             local_miner_tx: Arc::new(RwLock::new(HashMap::new())),
             module_tcp_bound_addr: Arc::new(RwLock::new(None)),
+            max_connections,
             jd: Arc::new(RwLock::new(JobDeclarationState::default())),
         }))
     }
@@ -139,6 +157,15 @@ impl StratumV2Server {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
+                        let active = server.local_miner_tx.read().await.len();
+                        if !admit_miner(active, server.max_connections) {
+                            drop(stream);
+                            warn!(
+                                "Stratum V2 refused {} ({} active, max_connections={})",
+                                peer_addr, active, server.max_connections
+                            );
+                            continue;
+                        }
                         info!("Stratum V2 (module TCP) connection from {}", peer_addr);
 
                         let endpoint = peer_addr.to_string();
@@ -263,8 +290,9 @@ impl StratumV2Server {
                                     StratumV2Error::ServerError(format!("Failed to get block: {e}"))
                                 })?
                             {
-                                // Update pool with new block
-                                self.pool.write().await.set_template(block.clone());
+                                // The mined header is not installed as a job. A share that repeats
+                                // it would pass proof of work, the node would answer duplicate, and
+                                // find credit would go to whoever opened a channel.
 
                                 // Broadcast SetNewPrevHashMessage to all miners
                                 // Get all active miners and their channels
@@ -936,6 +964,15 @@ impl StratumV2Server {
                 return encoder.encode(err.message_type(), &err.to_bytes()?);
             }
         }
+        if msg.tx_id_list.len() > crate::jd::MAX_DECLARED_TXIDS {
+            let err = DeclareMiningJobErrorMessage {
+                request_id: msg.request_id,
+                error_code: 3,
+                error_message: "declared txid list is too long".into(),
+            };
+            let mut encoder = crate::protocol::TlvEncoder::new();
+            return encoder.encode(err.message_type(), &err.to_bytes()?);
+        }
         let mut missing = Vec::new();
         for (i, txid) in msg.tx_id_list.iter().enumerate() {
             match self.node_api.get_mempool_transaction(txid).await {
@@ -945,13 +982,21 @@ impl StratumV2Server {
         }
         let accepted = {
             let mut jd = self.jd.write().await;
-            jd.begin_declare(
+            if !jd.begin_declare(
                 msg.request_id,
                 msg.mining_job_token,
                 endpoint.to_string(),
                 msg.tx_id_list,
                 missing.clone(),
-            );
+            ) {
+                let err = DeclareMiningJobErrorMessage {
+                    request_id: msg.request_id,
+                    error_code: 3,
+                    error_message: "too many job declarations".into(),
+                };
+                let mut encoder = crate::protocol::TlvEncoder::new();
+                return encoder.encode(err.message_type(), &err.to_bytes()?);
+            }
             if missing.is_empty() {
                 jd.accept(endpoint, msg.request_id)
             } else {
@@ -1124,32 +1169,34 @@ impl StratumV2Server {
             }
 
             if is_valid_block {
-                // Submit block to node and optionally to DATUM pool
-                if let Some(template) = pool.template_for(endpoint) {
-                    let block = self.reconstruct_block_from_share(template, &share_data);
-                    if let Err(e) = self.submit_block_from_share(template, &share_data).await {
-                        warn!("Failed to submit block: {}", e);
-                    } else {
-                        let snap = pool.commons_snapshot_id().map(|s| s.to_string());
-                        if let Err(e) = self
-                            .template_generator
-                            .credit_commons_find(&block, snap.as_deref(), Some(endpoint))
-                            .await
-                        {
-                            warn!("commons_credit_find: {e}");
+                // Submit the job's block. A later template would drop an honest find.
+                if let Some(template) = pool.block_for_job(share_data.job_id).cloned() {
+                    let block = self.reconstruct_block_from_share(&template, &share_data);
+                    match self.submit_block_from_share(&template, &share_data).await {
+                        Ok(blvm_node::module::traits::SubmitBlockResult::Accepted) => {
+                            let snap = pool.commons_snapshot_id().map(|s| s.to_string());
+                            if let Err(e) = self
+                                .template_generator
+                                .credit_commons_find(&block, snap.as_deref(), Some(endpoint))
+                                .await
+                            {
+                                warn!("commons_credit_find: {e}");
+                            }
+                            // When DATUM is loaded (pool mode), submit to pool
+                            let block_bytes = bincode::serialize(&block).unwrap_or_default();
+                            if let Err(e) = self
+                                .node_api
+                                .call_module(Some("datum"), "submit_pow", block_bytes)
+                                .await
+                            {
+                                debug!(
+                                    "DATUM submit_pow not available or failed: {} (ok if solo mining)",
+                                    e
+                                );
+                            }
                         }
-                        // When DATUM is loaded (pool mode), submit to pool
-                        let block_bytes = bincode::serialize(&block).unwrap_or_default();
-                        if let Err(e) = self
-                            .node_api
-                            .call_module(Some("datum"), "submit_pow", block_bytes)
-                            .await
-                        {
-                            debug!(
-                                "DATUM submit_pow not available or failed: {} (ok if solo mining)",
-                                e
-                            );
-                        }
+                        Ok(_) => {}
+                        Err(e) => warn!("Failed to submit block: {}", e),
                     }
                 }
             }
@@ -1190,13 +1237,13 @@ impl StratumV2Server {
         &self,
         template: &blvm_protocol::Block,
         share: &crate::pool::ShareData,
-    ) -> Result<(), StratumV2Error> {
+    ) -> Result<blvm_node::module::traits::SubmitBlockResult, StratumV2Error> {
         let block = self.reconstruct_block_from_share(template, share);
 
         // Submit to node
         match self.node_api.submit_block(block).await {
             Ok(result) => {
-                match result {
+                match &result {
                     blvm_node::module::traits::SubmitBlockResult::Accepted => {
                         info!("Block submitted and accepted by node");
                         if self.template_generator.from_gridpool() {
@@ -1220,7 +1267,7 @@ impl StratumV2Server {
                         debug!("Block already known to node");
                     }
                 }
-                Ok(())
+                Ok(result)
             }
             Err(e) => Err(StratumV2Error::ServerError(format!(
                 "Failed to submit block: {e}"
@@ -1280,4 +1327,21 @@ pub struct PoolStats {
     pub total_shares: u64,
     pub accepted_shares: u64,
     pub rejected_shares: u64,
+}
+
+#[cfg(test)]
+mod admit_tests {
+    use super::admit_miner;
+
+    #[test]
+    fn default_cap_stops_at_one_hundred() {
+        assert!(admit_miner(99, 100));
+        assert!(!admit_miner(100, 100));
+    }
+
+    #[test]
+    fn cap_of_one_accepts_the_first_and_refuses_the_second() {
+        assert!(admit_miner(0, 1));
+        assert!(!admit_miner(1, 1));
+    }
 }

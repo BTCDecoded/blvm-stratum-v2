@@ -60,6 +60,10 @@ impl StratumConfig {
             "stratum_v2.difficulty_target".to_string(),
             self.difficulty_target.to_string(),
         );
+        m.insert(
+            "stratum_v2.max_connections".to_string(),
+            self.max_connections.to_string(),
+        );
         m
     }
 }

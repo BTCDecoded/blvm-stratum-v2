@@ -3,7 +3,7 @@
 use crate::error::StratumV2Error;
 pub use crate::messages::ShareData;
 use blvm_protocol::{Block, Hash};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{debug, info, warn};
 
 /// Miner connection information
@@ -17,6 +17,21 @@ pub struct MinerConnection {
     pub stats: MinerStats,
 }
 
+/// One share identity. A repeat of this tuple is not new work.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SeenShare {
+    channel_id: u32,
+    job_id: u32,
+    nonce: u32,
+    version: i64,
+    merkle_root: Hash,
+}
+
+/// Channels one connection may open.
+const MAX_CHANNELS_PER_MINER: usize = 16;
+/// Accepted share identities kept so a replay is not credited again.
+const MAX_SEEN_SHARES: usize = 4096;
+
 /// Mining job information
 #[derive(Debug, Clone)]
 pub struct JobInfo {
@@ -24,6 +39,8 @@ pub struct JobInfo {
     pub job_id: u32,
     /// Previous block hash
     pub prev_hash: Hash,
+    /// Merkle root of this job's block, not a root the miner invents
+    pub merkle_root: Hash,
     /// Difficulty bits
     pub bits: u32,
     /// Timestamp
@@ -89,6 +106,11 @@ pub struct StratumV2Pool {
     commons_snapshot_id: Option<String>,
     /// sha256(endpoint) miners cut from the notebook. They do not get jobs.
     banned_miners: HashSet<[u8; 32]>,
+    /// Block each job was built from. Submission uses this, not a later template.
+    job_blocks: HashMap<u32, Block>,
+    /// Accepted shares, so a replay is not work.
+    seen_shares: HashSet<SeenShare>,
+    seen_order: VecDeque<SeenShare>,
     /// Current job ID counter
     job_id_counter: u32,
     /// Default min difficulty for new channels (when miner sends 0)
@@ -108,6 +130,11 @@ impl StratumV2Pool {
         self.miner_templates
             .get(endpoint)
             .or(self.current_template.as_ref())
+    }
+
+    /// Block the job was created from.
+    pub fn block_for_job(&self, job_id: u32) -> Option<&Block> {
+        self.job_blocks.get(&job_id)
     }
 
     pub fn commons_snapshot_id(&self) -> Option<&str> {
@@ -145,6 +172,9 @@ impl StratumV2Pool {
             miner_templates: HashMap::new(),
             commons_snapshot_id: None,
             banned_miners: HashSet::new(),
+            job_blocks: HashMap::new(),
+            seen_shares: HashSet::new(),
+            seen_order: VecDeque::new(),
             job_id_counter: 1,
             default_min_difficulty,
             merge_hits: HashMap::new(),
@@ -244,6 +274,13 @@ impl StratumV2Pool {
         let miner = self.miners.get_mut(endpoint).ok_or_else(|| {
             StratumV2Error::ProtocolError(format!("Miner not registered: {endpoint}"))
         })?;
+        if !miner.channels.contains_key(&channel_id)
+            && miner.channels.len() >= MAX_CHANNELS_PER_MINER
+        {
+            return Err(StratumV2Error::ProtocolError(format!(
+                "too many channels for {endpoint}"
+            )));
+        }
 
         let channel_info = ChannelInfo {
             channel_id,
@@ -275,6 +312,7 @@ impl StratumV2Pool {
         let job_info = JobInfo {
             job_id,
             prev_hash: template.header.prev_block_hash,
+            merkle_root: template.header.merkle_root,
             bits: template.header.bits as u32,
             timestamp: template.header.timestamp,
         };
@@ -296,8 +334,10 @@ impl StratumV2Pool {
         }
 
         // Store template
+        self.job_blocks.insert(job_id, template.clone());
         self.current_template = Some(template);
         self.miner_templates.clear();
+        self.cleanup_old_jobs();
 
         info!(
             "Created new mining job: job_id={}, channels={}",
@@ -319,6 +359,7 @@ impl StratumV2Pool {
         let job_info = JobInfo {
             job_id,
             prev_hash: template.header.prev_block_hash,
+            merkle_root: template.header.merkle_root,
             bits: template.header.bits as u32,
             timestamp: template.header.timestamp,
         };
@@ -334,7 +375,9 @@ impl StratumV2Pool {
                 job_distributions.push((miner.endpoint.clone(), *channel_id));
             }
         }
+        self.job_blocks.insert(job_id, template.clone());
         self.miner_templates.insert(endpoint.to_string(), template);
+        self.cleanup_old_jobs();
 
         info!(
             "Created miner job: job_id={}, endpoint={}, channels={}",
@@ -382,8 +425,17 @@ impl StratumV2Pool {
             (job_info, channel_target, endpoint.to_string())
         };
 
+        let seen = SeenShare {
+            channel_id: share.channel_id,
+            job_id: share.job_id,
+            nonce: share.nonce,
+            version: share.version,
+            merkle_root: share.merkle_root,
+        };
+        let replay = self.seen_shares.contains(&seen);
+
         // Validate share (no mutable borrow held)
-        let is_valid_share = self.validate_share(&share, &job_info, &channel_target);
+        let is_valid_share = !replay && self.validate_share(&share, &job_info, &channel_target);
 
         // Check if this is a valid block (meets network difficulty)
         let is_valid_block = if is_valid_share {
@@ -401,6 +453,9 @@ impl StratumV2Pool {
             };
 
         // Update stats (re-acquire mutable borrow)
+        if is_valid_share {
+            self.remember_share(seen);
+        }
         if let Some(miner) = self.miners.get_mut(&endpoint_key) {
             if is_valid_share {
                 miner.stats.accepted_shares += 1;
@@ -427,6 +482,21 @@ impl StratumV2Pool {
         Ok((is_valid_share, is_valid_block))
     }
 
+    fn remember_share(&mut self, seen: SeenShare) {
+        if self.seen_shares.contains(&seen) {
+            return;
+        }
+        while self.seen_order.len() >= MAX_SEEN_SHARES {
+            if let Some(old) = self.seen_order.pop_front() {
+                self.seen_shares.remove(&old);
+            } else {
+                break;
+            }
+        }
+        self.seen_shares.insert(seen.clone());
+        self.seen_order.push_back(seen);
+    }
+
     /// Validate if share meets network difficulty (is a valid block)
     fn validate_block(&self, share: &ShareData, job_info: &JobInfo) -> bool {
         use blvm_consensus::ConsensusProof;
@@ -450,6 +520,7 @@ impl StratumV2Pool {
     /// Clean up old jobs from channels
     /// Removes jobs older than max_jobs per channel
     pub fn cleanup_old_jobs(&mut self) {
+        let mut live = HashSet::new();
         for miner in self.miners.values_mut() {
             for channel in miner.channels.values_mut() {
                 // Keep only the most recent max_jobs
@@ -465,8 +536,10 @@ impl StratumV2Pool {
                         channel.jobs.remove(&job_id);
                     }
                 }
+                live.extend(channel.jobs.keys().copied());
             }
         }
+        self.job_blocks.retain(|job_id, _| live.contains(job_id));
     }
 
     /// Remove disconnected miners (those with no recent shares).
@@ -495,17 +568,20 @@ impl StratumV2Pool {
             self.miners.remove(endpoint);
             info!("Removed disconnected miner: {}", endpoint);
         }
+        self.cleanup_old_jobs();
         to_remove
     }
 
     /// Validate a share using blvm-consensus functions
     pub fn validate_share(&self, share: &ShareData, job_info: &JobInfo, target: &Hash) -> bool {
-        use blvm_consensus::ConsensusProof;
         use blvm_protocol::BlockHeader;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         // 1. Basic validation - check job exists
         if share.job_id != job_info.job_id {
+            return false;
+        }
+        if share.merkle_root != job_info.merkle_root {
             return false;
         }
 
@@ -532,26 +608,10 @@ impl StratumV2Pool {
             nonce: share.nonce as u64,
         };
 
-        // 4. Verify proof of work using blvm-consensus (validates against network target)
-        let consensus = ConsensusProof::new();
-        match consensus.check_proof_of_work(&header) {
-            Ok(pow_valid) => {
-                if !pow_valid {
-                    return false;
-                }
-            }
-            Err(_) => {
-                return false;
-            }
-        }
-
-        // 5. Check if hash meets channel target (for share validation)
-        // Channel targets are typically easier than network targets
-        // We need to check if the block hash is <= channel target
-        let block_hash = self.calculate_block_hash(&header);
-
-        // Compare hashes as big-endian integers (lower hash = higher difficulty)
-        // For share validation, we want hash <= target (easier than network difficulty)
+        // 4. A share meets the channel target. Network proof of work is `validate_block`.
+        // The header hash is a little-endian Bitcoin uint256. The channel target is big-endian.
+        let mut block_hash = self.calculate_block_hash(&header);
+        block_hash.reverse();
         self.hash_less_than_or_equal(&block_hash, target)
     }
 
@@ -595,71 +655,36 @@ impl StratumV2Pool {
         true
     }
 
-    /// Calculate channel target from difficulty
+    /// Calculate channel target from difficulty.
+    ///
+    /// Zero accepts any header hash (tests and open-ended channels).
+    /// A positive value starts at Bitcoin difficulty 1 (`0x1d00ffff`) and
+    /// grows easier as the value increases. The old compact expansion kept
+    /// the target in the low 128 bits, so every real header failed it.
     pub fn calculate_channel_target(&self, min_difficulty: u32) -> Result<Hash, StratumV2Error> {
-        // Use proper consensus functions for target calculation
-        // For channel targets, we adjust the difficulty to be easier than network difficulty
-        // Channel targets are typically 10-100x easier for share validation
-
-        // Base target for channel validation. Use 0x0f00ffff (exponent 15) so channel
-        // target is easier than block targets (e.g. 0x0f00ffff for tests). Must be >=
-        // block target for valid blocks to pass share validation. Cast mantissa to u128
-        // before shift to avoid overflow.
-        let base_bits = 0x0f00ffffu32;
-
-        // For channel validation, we make the target easier (higher target value)
-        // min_difficulty represents the minimum difficulty for share validation
-        // Higher min_difficulty = easier target (for share validation)
-
-        // Calculate target multiplier: for min_difficulty=0, use max target (accept any block)
-        // so tests can use genesis blocks (mainnet, etc.) without mining
         if min_difficulty == 0 {
             return Ok([0xFFu8; 32]);
         }
-        let difficulty_multiplier = (min_difficulty as u64 * 100).min(10000);
-
-        // Expand base target from compact format using blvm-consensus logic
-        let exponent = (base_bits >> 24) as u8;
-        let mantissa = base_bits & 0x00ffffff;
-
-        let base_target = if exponent <= 3 {
-            let shift = 8 * (3 - exponent);
-            (mantissa >> shift) as u128
-        } else {
-            let shift = 8 * (exponent - 3);
-            if shift >= 104 {
-                return Err(StratumV2Error::PoolError("Target too large".to_string()));
-            }
-            (mantissa as u128) << shift
-        };
-
-        // Multiply target by difficulty multiplier (makes it easier)
-        let channel_target = base_target
-            .checked_mul(difficulty_multiplier as u128)
-            .ok_or_else(|| {
-                StratumV2Error::PoolError("Target multiplication overflow".to_string())
-            })?;
-
-        // Convert to 32-byte hash (big-endian)
-        // Target is stored as a 256-bit value, but we only need 32 bytes
-        let mut target_bytes = [0u8; 32];
-        let target_be_bytes = channel_target.to_be_bytes();
-        // Copy to end of array (big-endian, right-aligned)
-        let bytes_len = target_be_bytes.len();
-        let start_idx = 32_usize.saturating_sub(bytes_len);
-        let copy_len = (32 - start_idx).min(bytes_len);
-        target_bytes[start_idx..start_idx + copy_len]
-            .copy_from_slice(&target_be_bytes[bytes_len - copy_len..]);
-
-        // Clamp to maximum target (0xFFFF...FFFF) if overflow
-        // For very easy targets, we might exceed 32 bytes, so clamp
-        if channel_target > u128::MAX / 2 {
-            // Use maximum target (all 0xFF)
-            target_bytes = [0xFFu8; 32];
-        }
-
-        Ok(target_bytes)
+        let base = blvm_consensus::pow::expand_target(0x1d00ffff)
+            .map_err(|err| StratumV2Error::PoolError(err.to_string()))?
+            .to_be_bytes();
+        Ok(scale_target(base, min_difficulty))
     }
+}
+
+/// Multiply a 256-bit big-endian target. Overflow becomes the maximum target.
+fn scale_target(target: [u8; 32], factor: u32) -> [u8; 32] {
+    if factor <= 1 {
+        return target;
+    }
+    let mut acc = [0u8; 32];
+    let mut carry = 0u64;
+    for i in (0..32).rev() {
+        let value = u64::from(target[i]) * u64::from(factor) + carry;
+        acc[i] = (value & 0xff) as u8;
+        carry = value >> 8;
+    }
+    if carry > 0 { [0xff; 32] } else { acc }
 }
 
 impl Default for StratumV2Pool {

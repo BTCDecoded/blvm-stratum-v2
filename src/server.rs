@@ -1172,10 +1172,7 @@ impl StratumV2Server {
                 // Submit the job's block. A later template would drop an honest find.
                 if let Some(template) = pool.block_for_job(share_data.job_id).cloned() {
                     let block = self.reconstruct_block_from_share(&template, &share_data);
-                    match self
-                        .submit_block_from_share(&template, &share_data)
-                        .await
-                    {
+                    match self.submit_block_from_share(&template, &share_data).await {
                         Ok(blvm_node::module::traits::SubmitBlockResult::Accepted) => {
                             let snap = pool.commons_snapshot_id().map(|s| s.to_string());
                             if let Err(e) = self

@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 #[config(name = "stratum-v2")]
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct StratumConfig {
-    /// Address to listen for Stratum V2 connections (e.g. "0.0.0.0:3333")
+    /// Address to listen for miner connections. Default is loopback.
+    /// Set `0.0.0.0:3333` only when miners on other hosts should connect.
     #[serde(default = "default_listen_addr")]
     #[config_env]
     pub listen_addr: String,
@@ -39,7 +40,7 @@ fn default_max_connections() -> u32 {
 }
 
 fn default_listen_addr() -> String {
-    "0.0.0.0:3333".to_string()
+    "127.0.0.1:3333".to_string()
 }
 
 fn default_difficulty_target() -> u32 {

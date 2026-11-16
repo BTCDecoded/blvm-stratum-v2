@@ -4,9 +4,9 @@ Stratum V2 mining protocol module for blvm-node.
 
 ## Overview
 
-This module implements a complete Stratum V2 mining protocol server for blvm-node. It provides:
+This module is a miner server that frames messages with the 6-byte Stratum V2 header. It does not perform the Noise handshake, so a miner speaking public Stratum V2 will not complete a connection. Block bytes inside the process use bincode. It provides:
 
-- **Stratum V2 Server**: Full protocol implementation for miner connections
+- **Miner server**: Setup, channels, jobs, and share submission on the SV2 frame, without Noise
 - **Mining Pool Management**: Miner registration, channel management, and job distribution
 - **Share Validation**: Proof-of-work validation using the consensus layer
 - **Block Template Generation**: Integration with node's block template generation
@@ -77,7 +77,7 @@ blvm-stratum-v2 = "0.1.*"
 Module `config.toml` (flat keys at `<modules.data_dir>/blvm-stratum-v2/config.toml`):
 
 ```toml
-listen_addr = "0.0.0.0:3333"
+listen_addr = "127.0.0.1:3333"
 difficulty_target = 1
 max_connections = 100
 ```
@@ -86,7 +86,7 @@ Node overrides: `[modules.blvm-stratum-v2]` with the same keys (`MODULE_CONFIG_*
 
 ### Configuration options
 
-- `listen_addr` (default: `0.0.0.0:3333`) — miner TCP bind (module-owned)
+- `listen_addr` (default: `127.0.0.1:3333`) — miner TCP bind. Set `0.0.0.0:3333` to accept miners from other hosts. The Noise handshake is not implemented.
 - `difficulty_target` (default: `1`) — default channel difficulty
 - `max_connections` (default: `100`)
 - `pool_name`, `extra_extranonce` — optional

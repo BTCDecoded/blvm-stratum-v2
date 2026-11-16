@@ -56,7 +56,7 @@ impl StratumV2Server {
         ctx: &blvm_node::module::traits::ModuleContext,
         node_api: Arc<dyn NodeAPI>,
     ) -> Result<Arc<Self>, StratumV2Error> {
-        let listen_addr = ctx.get_config_or("stratum_v2.listen_addr", "0.0.0.0:3333");
+        let listen_addr = ctx.get_config_or("stratum_v2.listen_addr", "127.0.0.1:3333");
         let difficulty_target: u32 = ctx
             .get_config_or("stratum_v2.difficulty_target", "1")
             .parse()

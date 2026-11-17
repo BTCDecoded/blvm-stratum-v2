@@ -1154,17 +1154,18 @@ impl StratumV2Server {
             let (is_valid_share, is_valid_block) =
                 pool.handle_share(endpoint, share_data.clone())?;
 
-            if is_valid_share && !pool.endpoint_is_banned(endpoint) {
-                if let Some(share_hash) = pool.get_share_hash(endpoint, &share_data) {
-                    let snap = pool.commons_snapshot_id().map(|s| s.to_string());
-                    let height = self.node_api.get_block_height().await.unwrap_or(0);
-                    if let Err(e) = self
-                        .template_generator
-                        .submit_commons_share(endpoint, &share_hash, snap.as_deref(), height)
-                        .await
-                    {
-                        warn!("commons_submit_share: {e}");
-                    }
+            if is_valid_share
+                && !pool.endpoint_is_banned(endpoint)
+                && let Some(share_hash) = pool.get_share_hash(endpoint, &share_data)
+            {
+                let snap = pool.commons_snapshot_id().map(|s| s.to_string());
+                let height = self.node_api.get_block_height().await.unwrap_or(0);
+                if let Err(e) = self
+                    .template_generator
+                    .submit_commons_share(endpoint, &share_hash, snap.as_deref(), height)
+                    .await
+                {
+                    warn!("commons_submit_share: {e}");
                 }
             }
 
@@ -1246,8 +1247,8 @@ impl StratumV2Server {
                 match &result {
                     blvm_node::module::traits::SubmitBlockResult::Accepted => {
                         info!("Block submitted and accepted by node");
-                        if self.template_generator.from_gridpool() {
-                            if let Err(e) = self
+                        if self.template_generator.from_gridpool()
+                            && let Err(e) = self
                                 .node_api
                                 .call_module(
                                     Some("blvm-gridpool"),
@@ -1255,9 +1256,8 @@ impl StratumV2Server {
                                     b"{}".to_vec(),
                                 )
                                 .await
-                            {
-                                warn!("gridpool_note_payment: {e}");
-                            }
+                        {
+                            warn!("gridpool_note_payment: {e}");
                         }
                     }
                     blvm_node::module::traits::SubmitBlockResult::Rejected(reason) => {
